@@ -35,5 +35,7 @@ near contract deploy-as-global \
   use-file "$WASM_PATH" \
   as-global-account-id "$CONTRACT_ID" \
   network-config "$NEAR_NETWORK_ID" \
-  sign-with-keychain \
+  sign-with-plaintext-private-key \
+  --signer-public-key "$DEPLOYER_PUBLIC_KEY" \
+  --signer-private-key "$DEPLOYER_PRIVATE_KEY" \
   send
