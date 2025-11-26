@@ -117,7 +117,7 @@ fn test_set_and_get_email_dkim_verifier() {
 }
 
 #[test]
-fn test_verify_and_recover_does_not_panic() {
+fn test_verify_zkemail_and_recover_does_not_panic() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
@@ -131,7 +131,7 @@ fn test_verify_and_recover_does_not_panic() {
     // Just ensure that calling the method constructs a promise without panicking.
     let proof = vec![1u8, 2, 3];
     let inputs = vec![4u8, 5, 6];
-    let _promise = contract.verify_and_recover(proof, inputs);
+    let _promise = contract.verify_zkemail_and_recover(proof, inputs);
 }
 
 #[test]

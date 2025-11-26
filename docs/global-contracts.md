@@ -175,7 +175,7 @@ The hash can be distributed by the backend or config (e.g. bs58‑encoded string
 - Use `near-workspaces` integration tests to simulate:
   - Deploying `email-recoverer` as a global contract (via RPC).
   - Creating a user account, calling `useGlobalContract`, then `new(...)`.
-  - Invoking `set_recovery_emails`, `verify_and_recover`, `verify_dkim_and_recover` to ensure behavior matches non‑global deployments.
+  - Invoking `set_recovery_emails`, `verify_zkemail_and_recover`, `verify_dkim_and_recover` to ensure behavior matches non‑global deployments.
 
 **7.2. Testnet Rollout**
 
@@ -212,5 +212,5 @@ The hash can be distributed by the backend or config (e.g. bs58‑encoded string
 - [x] Set `CONTRACT_ID` in `email-recoverer/.env` and `email-recoverer/env.example` to the desired global contract account ID (e.g. `w3a-email-recoverer.testnet`).
 - [ ] Expose `GLOBAL_EMAIL_RECOVERER_ACCOUNT_ID` (set to the same account ID) in frontend/backend config and update the “enable email recovery” flow to send `UseGlobalContractAction + new(...)` instead of `deployContract + new(...)`.
 - [ ] Ensure the Web3Authn SDK / wasm‑signer stack supports `DeployGlobalContract` / `UseGlobalContract` actions per `docs/global-contracts-for-sdk.md`, and bump dependencies accordingly.
-- [ ] Add near‑workspaces integration tests that exercise: global deploy → `useGlobalContract` on a user account → `new(...)` → `set_recovery_emails` / `verify_and_recover` / `verify_dkim_and_recover`, and confirm behavior matches today’s per‑account deployments.
+- [ ] Add near‑workspaces integration tests that exercise: global deploy → `useGlobalContract` on a user account → `new(...)` → `set_recovery_emails` / `verify_zkemail_and_recover` / `verify_dkim_and_recover`, and confirm behavior matches today’s per‑account deployments.
 - [ ] Run the testnet rollout (Section 6.2) and then mainnet rollout (Section 6.3), enabling the global‑contract flow behind a feature flag and monitoring for `GlobalContractDoesNotExist` errors and gas/storage regressions.

@@ -5,6 +5,8 @@
 email-recoverer/.env
 zk-email-verifier-contract/.env
 
+email-recoverer/scripts/create-dev-and-refund-to-cyan.sh
+
 # Build output
 target
 

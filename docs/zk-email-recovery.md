@@ -21,7 +21,7 @@ The goal is to let a user recover access to an account (rotate/add keys and/or a
   - Exposed methods (two recovery paths):
     - `set_recovery_emails(recovery_emails: Vec<HashedEmail>)`
       - Opt‑in/opt‑out to configure which hashed emails are allowed to participate in recovery.
-    - `verify_and_recover(zk_proof, zk_inputs)` (ZK‑Email path)
+    - `verify_zkemail_and_recover(zk_proof, zk_inputs)` (ZK‑Email path)
       - Calls the **global ZK‑Email verifier** contract with the proof and inputs.
       - If the proof verifies, extracts `account_id` and `new_public_key` from `zk_inputs`.
       - Updates `verified_timestamp` for the corresponding `HashedEmail`.
@@ -52,7 +52,7 @@ The goal is to let a user recover access to an account (rotate/add keys and/or a
       - Either:
         - Generates the Circom proof directly (if resource limits allow), or
         - Forwards the payload to a dedicated Circom prover server and receives `{proof, publicSignals}`.
-      - Submits the NEAR transaction calling `bob.near::verify_and_recover` (or `verify_and_add_key`) which in turn calls the global `ZkEmailVerifier`.
+      - Submits the NEAR transaction calling `bob.near::verify_zkemail_and_recover` (or `verify_and_add_key`) which in turn calls the global `ZkEmailVerifier`.
     - Does *not* hold NEAR private keys belonging to users; it only sends recovery transactions using its own relayer key.
   - **Circom prover server (optional)**
     - Full server/VM/container that runs the zk.email Circom witness generator and Groth16 prover.
@@ -122,7 +122,7 @@ From this point, the `email-recoverer` contract at `bob.near` is ready to accept
 
 4. **Relayer submits recovery transaction(s)**
    - For each recovery email that sends a valid recovery message:
-     - Relayer calls `bob.near::verify_and_recover(zk_proof, zk_inputs)`.
+     - Relayer calls `bob.near::verify_zkemail_and_recover(zk_proof, zk_inputs)`.
    - The `email-recoverer` contract at `bob.near`:
      1. Calls the global verifier:
         - `ZkEmailVerifier.verify(zk_proof, zk_inputs) -> (ok, outputs)`.
@@ -158,7 +158,7 @@ From this point, the `email-recoverer` contract at `bob.near` is ready to accept
        - Recovery policy (e.g. `min_required_emails`, `max_age_ms`).
      - Exposes:
        - `set_recovery_emails(recovery_emails: Vec<HashedEmail>)`.
-       - `verify_and_recover(zk_proof, zk_inputs)` (ZK‑Email).
+       - `verify_zkemail_and_recover(zk_proof, zk_inputs)` (ZK‑Email).
        - `verify_dkim_and_recover(dkim_payload)` (TEE/DKIM).
 
   2. **Global ZK‑Email verifier contract**

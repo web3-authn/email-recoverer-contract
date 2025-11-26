@@ -167,7 +167,7 @@ impl ZkEmailVerifier {
 
 - Validates request and sends payload to the Circom prover service (`/prove`).
 - Receives `{proof, publicSignals}`.
-- Submits NEAR tx to `bob.near::verify_and_recover(proof, publicSignals)`:
+- Submits NEAR tx to `bob.near::verify_zkemail_and_recover(proof, publicSignals)`:
   - `bob.near` (zk-email-recovery contract) calls the global `ZkEmailVerifier::verify`.
   - On success and policy satisfaction, `bob.near` calls `add_full_access_key(new_public_key)` on itself.
 

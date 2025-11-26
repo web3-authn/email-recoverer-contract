@@ -166,9 +166,9 @@ impl EmailRecoverer {
     }
 
     /// ZK‑Email path: verify proof via global ZkEmailVerifier and recover if policy is satisfied.
-    pub fn verify_and_recover(&mut self, zk_proof: Vec<u8>, zk_inputs: Vec<u8>) -> Promise {
+    pub fn verify_zkemail_and_recover(&mut self, zk_proof: Vec<u8>, zk_inputs: Vec<u8>) -> Promise {
         self.assert_owner();
-        log!("verify_and_recover called (ZK‑Email path)");
+        log!("verify_zkemail_and_recover called (ZK‑Email path)");
 
         ext_zk_email_verifier::ext(self.zk_email_verifier.clone())
             .with_static_gas(Gas::from_tgas(50))
