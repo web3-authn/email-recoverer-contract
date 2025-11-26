@@ -21,4 +21,3 @@ cargo near deploy build-reproducible-wasm "$CONTRACT_ID" \
   --signer-private-key "$DEPLOYER_PRIVATE_KEY" \
   send
 
-echo "Upgrade transaction submitted for ${_CONTRACT_ID}"
