@@ -1,0 +1,17 @@
+[package]
+name = "email-recoverer-factory"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+near-workspaces = { workspace = true }
+tokio = { workspace = true }
+anyhow = "1"

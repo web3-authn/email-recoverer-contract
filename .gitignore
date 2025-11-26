@@ -1,0 +1,15 @@
+# environment files
+.env
+**/.env
+**/.env.*
+email-recoverer/.env
+zk-email-verifier-contract/.env
+
+# Build output
+target
+
+# Editor directories and files
+.vscode/*
+.DS_Store
+
+commands.sh
