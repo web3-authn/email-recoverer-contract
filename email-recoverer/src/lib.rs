@@ -2,7 +2,6 @@ use near_sdk::{
     env, log, near, ext_contract,
     AccountId, Gas, Promise,
 };
-use near_sdk::borsh::BorshDeserialize;
 use std::collections::BTreeMap;
 
 /// Alias for a hashed email (e.g. H(email || salt)).
@@ -97,16 +96,17 @@ impl Default for EmailRecoverer {
 #[near]
 impl EmailRecoverer {
     /// Initialize the per‑user recoverer for the current account.
-    #[init]
+    #[init(ignore_state)]
     pub fn new(
         zk_email_verifier: AccountId,
         email_dkim_verifier: AccountId,
         policy: Option<RecoveryPolicy>,
         recovery_emails: Vec<HashedEmail>,
     ) -> Self {
-        assert!(
-            !env::state_exists(),
-            "Contract is already initialized"
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
+            "Only the account owner can initialize"
         );
 
         Self {
@@ -118,7 +118,16 @@ impl EmailRecoverer {
         }
     }
 
+    fn assert_owner(&self) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
+            "Only the contract owner can call this method"
+        );
+    }
+
     pub fn set_recovery_emails(&mut self, recovery_emails: Vec<HashedEmail>) {
+        self.assert_owner();
         self.recovery_emails = recovery_emails;
         // Reset timestamps when changing the set.
         self.verified_timestamp.clear();
@@ -133,6 +142,7 @@ impl EmailRecoverer {
     }
 
     pub fn set_zk_email_verifier(&mut self, zk_email_verifier: AccountId) {
+        self.assert_owner();
         self.zk_email_verifier = zk_email_verifier;
     }
 
@@ -141,6 +151,7 @@ impl EmailRecoverer {
     }
 
     pub fn set_email_dkim_verifier(&mut self, email_dkim_verifier: AccountId) {
+        self.assert_owner();
         self.email_dkim_verifier = email_dkim_verifier;
     }
 
@@ -149,11 +160,13 @@ impl EmailRecoverer {
     }
 
     pub fn set_policy(&mut self, policy: RecoveryPolicy) {
+        self.assert_owner();
         self.policy = policy;
     }
 
     /// ZK‑Email path: verify proof via global ZkEmailVerifier and recover if policy is satisfied.
     pub fn verify_and_recover(&mut self, zk_proof: Vec<u8>, zk_inputs: Vec<u8>) -> Promise {
+        self.assert_owner();
         log!("verify_and_recover called (ZK‑Email path)");
 
         ext_zk_email_verifier::ext(self.zk_email_verifier.clone())
@@ -168,6 +181,12 @@ impl EmailRecoverer {
 
     /// Callback after ZK‑Email verifier finishes.
     pub fn on_verify_zkemail_result(&mut self) {
+        let caller = env::predecessor_account_id();
+        assert!(
+            caller == self.zk_email_verifier || caller == env::current_account_id(),
+            "Unauthorized caller for on_verify_zkemail_result"
+        );
+
         let data = match env::promise_result(0) {
             near_sdk::PromiseResult::Successful(data) => data,
             near_sdk::PromiseResult::Failed => {
@@ -202,6 +221,7 @@ impl EmailRecoverer {
 
     /// TEE/DKIM path: ask the EmailDKIMVerifier to verify DKIM for the given payload.
     pub fn verify_dkim_and_recover(&mut self, dkim_payload: Vec<u8>) -> Promise {
+        self.assert_owner();
         log!("verify_dkim_and_recover called (TEE/DKIM path)");
 
         ext_email_dkim_verifier::ext(self.email_dkim_verifier.clone())
@@ -216,6 +236,12 @@ impl EmailRecoverer {
 
     /// Callback after EmailDKIMVerifier finishes.
     pub fn on_verify_dkim_result(&mut self) {
+        let caller = env::predecessor_account_id();
+        assert!(
+            caller == self.email_dkim_verifier || caller == env::current_account_id(),
+            "Unauthorized caller for on_verify_dkim_result"
+        );
+
         let data = match env::promise_result(0) {
             near_sdk::PromiseResult::Successful(data) => data,
             near_sdk::PromiseResult::Failed => {

@@ -195,7 +195,7 @@ async fn test_deploy_email_recoverer() -> Result<()> {
     Ok(())
 }
 
-/// Integration test: once deployed, a user can call set/get recovery emails.
+/// Integration test: once deployed, the contract account can call set/get recovery emails.
 #[tokio::test]
 async fn test_user_can_set_and_get_recovery_emails_in_sandbox() -> Result<()> {
     let contract_wasm = near_workspaces::compile_project("./").await?;
@@ -222,13 +222,10 @@ async fn test_user_can_set_and_get_recovery_emails_in_sandbox() -> Result<()> {
 
     assert!(init_outcome.is_success(), "EmailRecoverer init should succeed");
 
-    // Create a user account that will act as the caller.
-    let user = sandbox.dev_create_account().await?;
-
     let recovery_emails: Vec<Vec<u8>> = vec![vec![1, 2, 3], vec![4, 5, 6]];
 
-    let set_outcome = user
-        .call(contract.id(), "set_recovery_emails")
+    let set_outcome = contract
+        .call("set_recovery_emails")
         .args_json(json!({
             "recovery_emails": recovery_emails,
         }))
