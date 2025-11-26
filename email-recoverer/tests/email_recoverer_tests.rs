@@ -1,5 +1,5 @@
 use anyhow::Result;
-use email_recoverer_factory::{EmailRecoverer, RecoveryPolicy, HashedEmail};
+use email_recoverer_contract::{EmailRecoverer, RecoveryPolicy, HashedEmail};
 use near_sdk::test_utils::VMContextBuilder;
 use near_sdk::{testing_env, AccountId};
 use near_workspaces::types::Gas;

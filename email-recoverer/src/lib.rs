@@ -2,6 +2,7 @@ use near_sdk::{
     env, log, near, ext_contract,
     AccountId, Gas, Promise,
 };
+use near_sdk::borsh::BorshDeserialize;
 use std::collections::BTreeMap;
 
 /// Alias for a hashed email (e.g. H(email || salt)).
