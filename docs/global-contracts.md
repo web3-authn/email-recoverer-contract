@@ -84,16 +84,16 @@ We already have reproducible builds wired via `cargo-near` in `email-recoverer/C
 
 **Step 4.2 – Deploy as Global Contract (by Account ID)**
 
-Pick a dedicated global contract account, e.g.:
+For this project we deploy the global contract directly to the primary contract account, e.g.:
 
-- `email-recoverer-code.<app-root>.testnet`
+- `w3a-email-recoverer.testnet` (the `CONTRACT_ID` value in `email-recoverer/.env`)
 
 Then, from CI or an operator machine (not the browser):
 
 ```bash
 near contract deploy-as-global \
   use-file target/near-repro/email_recoverer_factory.wasm \
-  as-global-account-id email-recoverer-code.<app-root>.testnet \
+  as-global-account-id w3a-email-recoverer.testnet \
   network-config <network> \
   sign-with-keychain \
   send
@@ -106,9 +106,9 @@ Notes:
 
 **Step 4.3 – Track Global Contract Identifier**
 
-- Add a configuration variable (e.g. in `.env` / frontend config):
-  - `GLOBAL_EMAIL_RECOVERER_ACCOUNT_ID=email-recoverer-code.<app-root>.testnet`
-- Frontend and backend code will use this value when calling `useGlobalContract`.
+- Frontend and backend code should track the global contract account ID in config, e.g.:
+  - `GLOBAL_EMAIL_RECOVERER_ACCOUNT_ID=w3a-email-recoverer.testnet`
+- In this repo, `CONTRACT_ID` in `email-recoverer/.env` is set to the same value and is used by the deploy scripts.
 
 ---
 
@@ -152,9 +152,7 @@ Implementation details:
 - The UI should send both actions either:
   - In a **single transaction with two actions** (use global + init), or
   - As two sequential transactions, handling errors at each step.
-- If the account already has a contract, we must decide whether:
-  - To require users to migrate manually, or
-  - To treat this as “upgrade to global” and `useGlobalContract` over the existing code.
+- For this rollout, we assume the account does **not** already have a custom contract deployed; migrating legacy deployments to the global contract is out of scope.
 
 ### 5.2. Hash Mode (Optional)
 
@@ -170,34 +168,7 @@ The hash can be distributed by the backend or config (e.g. bs58‑encoded string
 
 ---
 
-## 6. Migration Strategy
-
-We expect some users to already have per‑account deployments of `email-recoverer` using regular `deployContract`.
-
-**Option A – “New Users Only” (simplest)**
-
-- For existing accounts:
-  - Leave their current deployment in place.
-  - Only use the global‑contract flow for **newly onboarded** users.
-- Pros: minimal complexity, no data migration.
-- Cons: mixed population (some users pay more storage).
-
-**Option B – Soft Migration on Next Upgrade**
-
-For accounts where we already control an upgrade path (e.g., via your UI or a management key):
-
-1. When the user next visits the recovery UI, detect:
-   - `contract_code_hash` vs the global code hash / account.
-2. If they are not already using the global contract:
-   - Offer a one‑click “upgrade to global contract” flow:
-     - Call `useGlobalContract` referencing the global contract.
-     - Optionally re‑run `new` or a dedicated migration method if state layout changed (not currently the case).
-
-This keeps the user’s **state** but switches them to shared code.
-
----
-
-## 7. Testing and Rollout
+## 6. Testing and Rollout
 
 **7.1. Local / Sandbox Testing**
 
@@ -223,7 +194,7 @@ This keeps the user’s **state** but switches them to shared code.
 
 ---
 
-## 8. Future Enhancements
+## 7. Future Enhancements
 
 - **Support both by‑account and by‑hash references**:
   - Developers choose per environment (e.g. testnet = account ID; mainnet = hash).
@@ -231,3 +202,15 @@ This keeps the user’s **state** but switches them to shared code.
   - Show which global contract version a user’s account is running.
 - **Centralize verifier references**:
   - Combine global deployment of verifier contracts (`zk-email-verifier`, DKIM verifier) with the global `email-recoverer` to further reduce redundant deployments.
+
+---
+
+## 8. Implementation TODOs
+
+- [x] Wire a reproducible build that outputs `target/near-repro/email_recoverer_factory.wasm` (e.g. via `cargo near build reproducible-wasm --manifest-path email-recoverer/Cargo.toml --out-dir target/near-repro` in CI).
+- [x] Add scripts (e.g. `deploy-global.sh`, `upgrade-global.sh`) that run the reproducible build and call `near contract deploy-as-global use-file target/near-repro/email_recoverer_factory.wasm as-global-account-id <CONTRACT_ID> ...`.
+- [x] Set `CONTRACT_ID` in `email-recoverer/.env` and `email-recoverer/env.example` to the desired global contract account ID (e.g. `w3a-email-recoverer.testnet`).
+- [ ] Expose `GLOBAL_EMAIL_RECOVERER_ACCOUNT_ID` (set to the same account ID) in frontend/backend config and update the “enable email recovery” flow to send `UseGlobalContractAction + new(...)` instead of `deployContract + new(...)`.
+- [ ] Ensure the Web3Authn SDK / wasm‑signer stack supports `DeployGlobalContract` / `UseGlobalContract` actions per `docs/global-contracts-for-sdk.md`, and bump dependencies accordingly.
+- [ ] Add near‑workspaces integration tests that exercise: global deploy → `useGlobalContract` on a user account → `new(...)` → `set_recovery_emails` / `verify_and_recover` / `verify_dkim_and_recover`, and confirm behavior matches today’s per‑account deployments.
+- [ ] Run the testnet rollout (Section 6.2) and then mainnet rollout (Section 6.3), enabling the global‑contract flow behind a feature flag and monitoring for `GlobalContractDoesNotExist` errors and gas/storage regressions.
