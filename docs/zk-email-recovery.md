@@ -26,9 +26,9 @@ The goal is to let a user recover access to an account (rotate/add keys and/or a
       - If the proof verifies, extracts `account_id` and `new_public_key` from `zk_inputs`.
       - Updates `verified_timestamp` for the corresponding `HashedEmail`.
       - Once the recovery policy is satisfied (e.g. N emails verified within the last X minutes), calls `add_key` / `add_full_access_key(new_public_key)` on the same account (`env::current_account_id()`).
-    - `verify_dkim_and_recover(dkim_payload)` (TEE/DKIM path)
-      - Issues a cross‑contract call to a global **EmailDKIMVerifier** contract that handles the TEE yield/resume flow for DKIM + DNS.
-      - In the callback (e.g. `on_verify_dkim_result`), checks the attested `{from_email_hash, account_id, new_public_key}` against local policy and, if satisfied, calls `add_full_access_key(new_public_key)`.
+    - `verify_dkim_and_recover(email_blob)` (TEE/DKIM path)
+      - Issues a cross‑contract call to a global **EmailDKIMVerifier** contract that handles the TEE yield/resume flow for DKIM + DNS, passing the full raw email.
+      - In the callback (e.g. `on_verify_dkim_result`), uses the verifier’s boolean result together with local parsing of `email_blob` to enforce policy and, if satisfied, calls `add_full_access_key(new_public_key)`.
   - Once `new_public_key` is added to `<user>.near`, the user can:
     - Use that key to call the existing Web3Authn contract’s `verify_and_register_user` to attach a new authenticator for the recovered account.
 
@@ -67,8 +67,11 @@ The goal is to let a user recover access to an account (rotate/add keys and/or a
 1. **User chooses one or more recovery emails**
    - In the wallet UI, the user picks one or more email addresses (e.g. `bob@gmail.com`, `bob.work@example.com`) for recovery.
    - The client derives, per email:
-     - `salt` (per account, stored on‑chain or in the client).
-     - `hashed_email = H(email || salt)` (this is what goes on‑chain).
+     - `canonical_email` by:
+       - Stripping display names (use only `local@domain`),
+       - Lowercasing the entire address,
+       - Trimming whitespace.
+     - `hashed_email = SHA256(canonical_email || "|" || account_id)` (this is what goes on‑chain).
 
 2. **Deploy `email-recoverer` contract to `<user>.near`**
    - The wallet deploys the recovery contract WASM to `bob.near` (if not already present).
