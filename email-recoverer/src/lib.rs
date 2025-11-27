@@ -83,7 +83,6 @@ pub trait EmailRecovererCallbacks {
     fn on_verify_dkim_result(
         &mut self,
         email_blob: String,
-        caller: AccountId,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     );
 }
@@ -349,10 +348,10 @@ impl EmailRecoverer {
     /// TEE/DKIM path: ask the EmailDKIMVerifier to verify DKIM for the given email blob.
     #[payable]
     pub fn verify_dkim_and_recover(&mut self, email_blob: String) -> Promise {
-        self.assert_owner();
         log!("verify_dkim_and_recover called (TEE/DKIM path)");
         let attached = env::attached_deposit().as_yoctonear();
         let caller = env::predecessor_account_id(); // relay account
+        // relay account pays for Outlayer fees
 
         ext_email_dkim_verifier::ext(self.email_dkim_verifier.clone())
             // Forward the full attached deposit to the DKIM verifier.
@@ -362,7 +361,7 @@ impl EmailRecoverer {
             .then(
                 ext_self::ext(env::current_account_id())
                     .with_static_gas(Gas::from_tgas(50))
-                    .on_verify_dkim_result(email_blob, caller),
+                    .on_verify_dkim_result(email_blob),
             )
     }
 
@@ -370,38 +369,31 @@ impl EmailRecoverer {
     pub fn on_verify_dkim_result(
         &mut self,
         email_blob: String,
-        caller_account: AccountId,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     ) {
-        let caller = env::predecessor_account_id();
-        assert!(
-            caller == self.email_dkim_verifier || caller == env::current_account_id(),
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.email_dkim_verifier,
             "Unauthorized caller for on_verify_dkim_result"
         );
 
         let verification = match result {
             Ok(v) => v,
             Err(_err) => {
-                log!("DKIM verification promise failed");
+                log!("Email DKIM verification promise failed");
                 return;
             }
         };
 
-        // Always forward any unused DKIM deposit back to the original caller.
-        if verification.unused_deposit_yocto > 0 {
-            Promise::new(caller_account.clone())
-                .transfer(NearToken::from_yoctonear(verification.unused_deposit_yocto));
-        }
-
         if !verification.verified {
-            log!("DKIM verification returned verified = false");
+            log!("Email DKIM verification returned verified = false");
             return;
         }
 
         let account_id = match verification.account_id {
             Some(a) => a,
             None => {
-                log!("DKIM verification succeeded but account_id is missing");
+                log!("Email DKIM verification succeeded but account_id is missing");
                 return;
             }
         };
@@ -409,7 +401,7 @@ impl EmailRecoverer {
         let current = env::current_account_id().to_string();
         if account_id != current {
             log!(
-                "DKIM verification account_id {} does not match current account {}",
+                "Email DKIM verification account_id {} does not match current account {}",
                 account_id,
                 env::current_account_id()
             );
@@ -428,22 +420,18 @@ impl EmailRecoverer {
         let hashed_email = match self.hash_from_email_for_current_account(&email_blob) {
             Some(h) => h,
             None => {
-                log!("DKIM verification succeeded but failed to parse From: email");
+                log!("Email DKIM verification succeeded but failed to parse From: email");
                 return;
             }
         };
 
-        if !self
-            .recovery_emails
-            .iter()
-            .any(|e| *e == hashed_email)
-        {
-            log!("DKIM From: email is not in configured recovery_emails");
+        if !self.recovery_emails.iter().any(|e| *e == hashed_email) {
+            log!("From: email is not in configured recovery_emails");
             return;
         }
 
         log!(
-            "DKIM verification succeeded for email blob of length {} and new key string length {}",
+            "Email DKIM verification succeeded for email blob of length {} and new key string length {}",
             email_blob.len(),
             new_public_key_str.len()
         );
@@ -451,7 +439,7 @@ impl EmailRecoverer {
         let email_ts = match verification.email_timestamp_ms {
             Some(ts) => ts,
             None => {
-                log!("DKIM verification succeeded but email_timestamp_ms is missing");
+                log!("Email DKIM verification succeeded but email_timestamp_ms is missing");
                 return;
             }
         };

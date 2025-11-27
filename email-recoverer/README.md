@@ -108,26 +108,21 @@ This gives you:
 
 ## 4. DKIM Path Fees & Refunds (Relayer Semantics)
 
-The DKIM/Outlayer path is designed so that a relayer attaches at least **0.02 NEAR** per verification request, while Outlayer may consume only a fraction of that. Any unused portion is surfaced back to the relayer via the DKIM verifier and this contract:
+The DKIM/Outlayer path is designed so that a relayer attaches at least **0.02 NEAR** per verification request, while Outlayer may consume only a fraction of that. Any unused portion is handled inside the DKIM verifier contract.
 
 - **Inputs**
   - Relayer calls `user.near::verify_dkim_and_recover(email_blob)` and attaches at least `0.02 NEAR` (matching the DKIM verifier’s `MIN_DEPOSIT`).
 
 - **Flow**
   1. `EmailRecoverer::verify_dkim_and_recover`:
-     - Forwards the full attached deposit to the global `EmailDkimVerifier` via `with_attached_deposit`.
+     - Forwards the full attached deposit to the global `EmailDkimVerifier` via `with_attached_deposit`, along with the relayer’s account ID as `payer_account_id`.
   2. `EmailDkimVerifier::request_email_verification`:
      - Uses `MIN_DEPOSIT` (currently 0.02 NEAR) as the DKIM/Outlayer budget.
      - Forwards only the portion needed (e.g. ~0.001 NEAR) to Outlayer.
-     - Calculates `unused_deposit_yocto` as the amount not consumed by Outlayer and:
-       - Transfers that unused amount back to its caller (`EmailRecoverer`).
-       - Returns a `VerificationResult` that includes `unused_deposit_yocto`.
+     - Calculates `unused_deposit_yocto` as the amount not consumed by Outlayer and refunds it directly to `payer_account_id`.
   3. `EmailRecoverer::on_verify_dkim_result`:
-     - Receives `VerificationResult { verified, account_id, new_public_key, email_timestamp_ms, unused_deposit_yocto }` plus the original `caller` (relayer account ID).
-     - Immediately forwards any `unused_deposit_yocto` back to `caller`:
-       - `Promise::new(caller).transfer(unused_deposit_yocto)`.
+     - Receives `VerificationResult { verified, account_id, new_public_key, email_timestamp_ms, unused_deposit_yocto }`.
      - Applies all normal checks (account binding, hashed email membership, `RecoveryPolicy`) and, if satisfied, adds the new full-access key.
 
 - **Net effect**
-  - Relayer’s maximum spend per DKIM recovery attempt is the attached deposit (typically 0.02 NEAR).
-  - If Outlayer uses less than that (e.g. ~0.001 NEAR), the difference is refunded hop-by-hop and ultimately credited back to the relayer’s account based on `unused_deposit_yocto`.
+  - The relayer’s net spend per DKIM recovery attempt is `actual Outlayer cost ≤ MIN_DEPOSIT` (typically a small fraction of 0.02 NEAR), with refunds handled by the DKIM verifier contract.
