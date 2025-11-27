@@ -4,8 +4,8 @@ use near_sdk::{
 };
 use near_sdk::serde_json::{json, Value};
 
-/// Minimum deposit required to simulate Outlayer execution (0.01 NEAR).
-const MIN_DEPOSIT: u128 = 10u128.pow(22);
+/// Minimum deposit required to simulate Outlayer execution (0.1 NEAR).
+const MIN_DEPOSIT: u128 = 10u128.pow(23);
 
 #[near(contract_state)]
 pub struct MockDkimVerifier {}
@@ -32,7 +32,7 @@ impl MockDkimVerifier {
 
         assert!(
             attached >= MIN_DEPOSIT,
-            "Attach at least 0.01 NEAR for Outlayer execution"
+            "Attach at least 0.1 NEAR for Outlayer execution"
         );
 
         let _input_payload = json!({
