@@ -13,7 +13,7 @@ source "$CONTRACT_DIR/.env"
 
 cd "$REPO_ROOT/email-recoverer"
 
-cargo near deploy build-non-reproducible-wasm "$CONTRACT_ID" \
+cargo near deploy build-reproducible-wasm "$CONTRACT_ID" \
   without-init-call \
   network-config "$NEAR_NETWORK_ID" \
   sign-with-plaintext-private-key \
