@@ -2,8 +2,8 @@
 # List all available commands
 default:
     @echo "Available commands:"
-    @echo "  just deploy                - Deploy email-recoverer global contract (NEP-0591)"
-    @echo "  just upgrade               - Upgrade email-recoverer global contract (NEP-0591)"
+    @echo "  just deploy-email-recoverer                - Deploy email-recoverer global contract (NEP-0591)"
+    @echo "  just upgrade-email-recoverer               - Upgrade email-recoverer global contract (NEP-0591)"
     @echo ""
     @echo "Make sure to set up your .env file before running any commands."
 

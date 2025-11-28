@@ -369,9 +369,11 @@ impl EmailRecoverer {
         email_blob: String,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     ) {
+        // Callback is scheduled by this contract in `verify_dkim_and_recover`
+        // Predecessor should always be this contract account.
         assert_eq!(
             env::predecessor_account_id(),
-            self.email_dkim_verifier,
+            env::current_account_id(),
             "Unauthorized caller for on_verify_dkim_result"
         );
 
