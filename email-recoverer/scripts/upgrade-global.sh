@@ -22,7 +22,7 @@ cargo near build reproducible-wasm \
   --manifest-path "$CONTRACT_DIR/Cargo.toml" \
   --out-dir target/near-repro
 
-WASM_PATH="target/near-repro/email_recoverer_factory.wasm"
+WASM_PATH="target/near-repro/email_recoverer_contract.wasm"
 
 if [[ ! -f "$WASM_PATH" ]]; then
   echo "WASM file not found at $WASM_PATH" >&2
