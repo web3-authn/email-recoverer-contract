@@ -119,9 +119,9 @@ The DKIM/Outlayer path is designed so that a relayer attaches at least **0.01 NE
   2. `EmailDkimVerifier::request_email_verification`:
      - Uses `MIN_DEPOSIT` (currently 0.01 NEAR) as the DKIM/Outlayer budget.
      - Forwards only the portion needed (e.g. ~0.001 NEAR) to Outlayer.
-     - Calculates `unused_deposit_yocto` as the amount not consumed by Outlayer and refunds it directly to `payer_account_id`.
+     - Refunds any unused portion of the attached deposit directly to `payer_account_id`.
   3. `EmailRecoverer::on_verify_dkim_result`:
-     - Receives `VerificationResult { verified, account_id, new_public_key, email_timestamp_ms, unused_deposit_yocto }`.
+     - Receives `VerificationResult { verified, account_id, new_public_key, email_timestamp_ms }`.
      - Applies all normal checks (account binding, hashed email membership, `RecoveryPolicy`) and, if satisfied, adds the new full-access key.
 
 - **Net effect**

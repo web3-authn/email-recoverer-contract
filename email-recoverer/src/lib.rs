@@ -53,7 +53,6 @@ pub struct VerificationResult {
     pub account_id: Option<String>,
     pub new_public_key: Option<String>,
     pub email_timestamp_ms: Option<u64>,
-    pub unused_deposit_yocto: u128,
 }
 
 /// External interface for the global ZK‑Email verifier contract.
