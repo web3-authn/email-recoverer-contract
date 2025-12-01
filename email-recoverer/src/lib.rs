@@ -27,38 +27,45 @@ impl Default for RecoveryPolicy {
     }
 }
 
-/// Public outputs returned by the ZK‑Email verifier.
+/// Groth16 proof input used by the ZK‑Email verifier.
 #[near_sdk::near(serializers = [json, borsh])]
 #[derive(Clone)]
-pub struct ZkEmailPublicInputs {
-    pub from_email_hash: Vec<u8>,
-    pub account_id: String,
-    pub new_public_key: Vec<u8>,
-    pub nonce: Vec<u8>,
+pub struct ProofInput {
+    /// pi_a: [Ax, Ay, Az]; we use Ax, Ay and assume Az = 1.
+    pub pi_a: [String; 3],
+    /// pi_b: [[Bx1, Bx0], [By1, By0], [Bz1, Bz0]]; we use the first two pairs.
+    pub pi_b: [[String; 2]; 3],
+    /// pi_c: [Cx, Cy, Cz]; we use Cx, Cy and assume Cz = 1.
+    pub pi_c: [String; 3],
 }
 
-#[near_sdk::near(serializers = [json, borsh])]
-#[derive(Clone)]
-pub struct ZkEmailVerificationResult {
-    pub verified: bool,
-    pub outputs: Option<ZkEmailPublicInputs>,
-}
-
-/// Result returned by the EmailDKIMVerifier TEE path.
-/// Mirrors the VerificationResult struct exposed by the DKIM verifier contract.
+/// Result returned by the ZK‑Email and EmailDKIMVerifier contracts.
+/// Mirrors the `VerificationResult` structs exposed by those verifier contracts.
 #[near_sdk::near(serializers = [json, borsh])]
 #[derive(Clone)]
 pub struct VerificationResult {
     pub verified: bool,
-    pub account_id: Option<String>,
-    pub new_public_key: Option<String>,
+    pub account_id: String,
+    pub new_public_key: String,
+    pub from_address: String,
     pub email_timestamp_ms: Option<u64>,
 }
 
 /// External interface for the global ZK‑Email verifier contract.
 #[ext_contract(ext_zk_email_verifier)]
 pub trait ZkEmailVerifier {
-    fn verify(&self, proof: Vec<u8>, public_inputs: Vec<u8>) -> ZkEmailVerificationResult;
+    /// Verify a zk-SNARK proof and ensure that the provided
+    /// `account_id`, `new_public_key`, `from_email`, and `timestamp`
+    /// are correctly bound into the public inputs.
+    fn verify_with_binding(
+        &self,
+        proof: ProofInput,
+        public_inputs: Vec<String>,
+        account_id: String,
+        new_public_key: String,
+        from_email: String,
+        timestamp: String,
+    ) -> VerificationResult;
 }
 
 /// External interface for the global EmailDKIMVerifier contract (TEE path).
@@ -78,7 +85,10 @@ pub trait EmailDkimVerifier {
 /// Internal callbacks on this contract used for cross‑contract promises.
 #[ext_contract(ext_self)]
 pub trait EmailRecovererCallbacks {
-    fn on_verify_zkemail_result(&mut self);
+    fn on_verify_zkemail_result(
+        &mut self,
+        #[callback_result] result: Result<VerificationResult, PromiseError>,
+    );
     fn on_verify_dkim_result(
         &mut self,
         email_blob: String,
@@ -228,53 +238,46 @@ impl EmailRecoverer {
         self.add_full_access_key_internal(new_public_key);
     }
 
-    /// Extract a canonical `from` email from the raw email blob and hash it
-    /// using the current account ID as salt: H(email || "|" || account_id).
-    fn hash_from_email_for_current_account(&self, email_blob: &str) -> Option<HashedEmail> {
-        // Parse headers until the first blank line.
-        let mut from_line: Option<String> = None;
-        for line in email_blob.lines() {
-            let trimmed = line.trim_end();
-            if trimmed.is_empty() {
-                break;
-            }
-
-            let lower = trimmed.to_ascii_lowercase();
-            if lower.starts_with("from:") {
-                from_line = Some(trimmed.to_string());
-                break;
-            }
-        }
-
-        let from_line = from_line?;
-        let after_colon = from_line.splitn(2, ':').nth(1)?.trim();
-
-        // Very simple address extraction: prefer <addr>, otherwise use the rest.
-        let addr = if let (Some(start), Some(end)) = (after_colon.find('<'), after_colon.find('>')) {
-            after_colon[start + 1..end].trim()
-        } else {
-            after_colon
-        };
-
-        if addr.is_empty() {
-            return None;
-        }
-
-        let canonical = addr.to_ascii_lowercase();
+    /// Hash a canonical email address using the current account ID as salt:
+    /// H(email || "|" || account_id). Assumes `email_address` is already a
+    /// bare address (e.g. "alice@example.com").
+    fn hash_from_email_for_current_account(&self, email_address: &str) -> HashedEmail {
+        let canonical = email_address.trim().to_ascii_lowercase();
         let mut data = canonical.into_bytes();
         data.push(b'|');
         data.extend(env::current_account_id().as_bytes());
 
-        Some(env::sha256(&data))
+        env::sha256(&data)
     }
 
     /// ZK‑Email path: verify proof via global ZkEmailVerifier and recover if policy is satisfied.
-    pub fn verify_zkemail_and_recover(&mut self, zk_proof: Vec<u8>, zk_inputs: Vec<u8>) -> Promise {
+    pub fn verify_zkemail_and_recover(
+        &mut self,
+        proof: ProofInput,
+        public_inputs: Vec<String>,
+        account_id: String,
+        new_public_key: String,
+        from_email: String,
+        timestamp: String,
+    ) -> Promise {
         log!("verify_zkemail_and_recover called (ZK‑Email path)");
+
+        // Cheap local binding: require the proof target account to be this account.
+        let current = env::current_account_id().to_string();
+        if account_id != current {
+            env::panic_str("verify_zkemail_and_recover: account_id must match current account");
+        }
 
         ext_zk_email_verifier::ext(self.zk_email_verifier.clone())
             .with_static_gas(Gas::from_tgas(50))
-            .verify(zk_proof, zk_inputs)
+            .verify_with_binding(
+                proof,
+                public_inputs,
+                account_id,
+                new_public_key,
+                from_email,
+                timestamp,
+            )
             .then(
                 ext_self::ext(env::current_account_id())
                     .with_static_gas(Gas::from_tgas(50))
@@ -283,64 +286,61 @@ impl EmailRecoverer {
     }
 
     /// Callback after ZK‑Email verifier finishes.
-    pub fn on_verify_zkemail_result(&mut self) {
-        let caller = env::predecessor_account_id();
-        assert!(
-            caller == self.zk_email_verifier || caller == env::current_account_id(),
+    pub fn on_verify_zkemail_result(
+        &mut self,
+        #[callback_result] result: Result<VerificationResult, PromiseError>,
+    ) {
+        // Callback is scheduled by this contract in `verify_zkemail_and_recover`
+        // so the predecessor should be this contract.
+        assert_eq!(
+            env::predecessor_account_id(),
+            env::current_account_id(),
             "Unauthorized caller for on_verify_zkemail_result"
         );
 
-        let data = match env::promise_result(0) {
-            near_sdk::PromiseResult::Successful(data) => data,
-            near_sdk::PromiseResult::Failed => {
+        let verification = match result {
+            Ok(v) => v,
+            Err(_err) => {
                 log!("ZK‑Email verification promise failed");
                 return;
             }
         };
 
-        let zk_result = match ZkEmailVerificationResult::try_from_slice(&data) {
-            Ok(v) => v,
-            Err(_err) => {
-                log!("Failed to deserialize ZkEmailVerificationResult from promise result");
-                return;
-            }
-        };
-
-        if !zk_result.verified {
+        if !verification.verified {
             log!("ZK‑Email verification returned verified = false");
             return;
         }
 
-        let outputs = match zk_result.outputs {
-            Some(o) => o,
-            None => {
-                log!("ZK‑Email verification succeeded but outputs are missing");
-                return;
-            }
-        };
-
-        // Bind proof to this account.
-        if outputs.account_id != env::current_account_id().to_string() {
+        let current = env::current_account_id().to_string();
+        if verification.account_id != current {
             log!(
                 "ZK‑Email verification account_id {} does not match current account {}",
-                outputs.account_id,
+                verification.account_id,
                 env::current_account_id()
             );
             return;
         }
 
-        // Ensure the hashed email from the proof is one of the configured recovery emails.
-        if !self
-            .recovery_emails
-            .iter()
-            .any(|e| *e == outputs.from_email_hash)
-        {
-            log!("ZK‑Email from_email_hash is not in configured recovery_emails");
+        // Compute hashed email from the proved From: address and ensure it is configured.
+        let hashed_email = self.hash_from_email_for_current_account(&verification.from_address);
+        if !self.recovery_emails.iter().any(|e| *e == hashed_email) {
+            log!("ZK‑Email From: email is not in configured recovery_emails");
             return;
         }
 
-        let now_ms = env::block_timestamp_ms();
-        self.mark_verified_and_maybe_recover(outputs.from_email_hash, outputs.new_public_key, now_ms);
+        let timestamp_ms = match verification.email_timestamp_ms {
+            Some(ts) => ts,
+            None => {
+                log!("ZK‑Email verification succeeded but email_timestamp_ms is missing");
+                return;
+            }
+        };
+
+        self.mark_verified_and_maybe_recover(
+            hashed_email,
+            verification.new_public_key.clone().into_bytes(),
+            timestamp_ms,
+        );
     }
 
     /// TEE/DKIM path: ask the EmailDKIMVerifier to verify DKIM for the given email blob.
@@ -390,40 +390,19 @@ impl EmailRecoverer {
             return;
         }
 
-        let account_id = match verification.account_id {
-            Some(a) => a,
-            None => {
-                log!("Email DKIM verification succeeded but account_id is missing");
-                return;
-            }
-        };
-
         let current = env::current_account_id().to_string();
-        if account_id != current {
+        if verification.account_id != current {
             log!(
                 "Email DKIM verification account_id {} does not match current account {}",
-                account_id,
+                verification.account_id,
                 env::current_account_id()
             );
             return;
         }
 
-        let new_public_key_str = match verification.new_public_key {
-            Some(pk) => pk,
-            None => {
-                log!("DKIM verification succeeded but new_public_key is missing");
-                return;
-            }
-        };
-
-        // Compute hashed email from the From: header and ensure it is configured.
-        let hashed_email = match self.hash_from_email_for_current_account(&email_blob) {
-            Some(h) => h,
-            None => {
-                log!("Email DKIM verification succeeded but failed to parse From: email");
-                return;
-            }
-        };
+        // Compute hashed email from the DKIM-verifier-provided From: address
+        // and ensure it is configured.
+        let hashed_email = self.hash_from_email_for_current_account(&verification.from_address);
 
         if !self.recovery_emails.iter().any(|e| *e == hashed_email) {
             log!("From: email is not in configured recovery_emails");
@@ -433,7 +412,7 @@ impl EmailRecoverer {
         log!(
             "Email DKIM verification succeeded for email blob of length {} and new key string length {}",
             email_blob.len(),
-            new_public_key_str.len()
+            verification.new_public_key.len()
         );
 
         let email_ts = match verification.email_timestamp_ms {
@@ -444,8 +423,11 @@ impl EmailRecoverer {
             }
         };
 
-        // TODO: decode "ed25519:..." into raw key bytes instead of using the raw string.
-        self.mark_verified_and_maybe_recover(hashed_email, new_public_key_str.into_bytes(), email_ts);
+        self.mark_verified_and_maybe_recover(
+            hashed_email,
+            verification.new_public_key.clone().into_bytes(),
+            email_ts,
+        );
     }
 
     /// Internal helper to actually add a full‑access key to this account.

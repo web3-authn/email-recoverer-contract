@@ -17,3 +17,8 @@ upgrade-email-recoverer:
     @echo "Upgrading email-recoverer global contract (NEP-0591) in production..."
     sh ./email-recoverer/scripts/upgrade-global.sh
 
+cargo-build:
+    cd zk-email-verifier-contract && cargo near build
+
+cargo-test:
+    cd zk-email-verifier-contract && cargo test

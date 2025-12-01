@@ -7,6 +7,19 @@ use near_sdk::serde_json::{json, Value};
 /// Minimum deposit required to simulate Outlayer execution (0.1 NEAR).
 const MIN_DEPOSIT: u128 = 10u128.pow(23);
 
+/// Minimal stand-in for the real VerificationResult type used by the
+/// email-dkim-verifier contract. This mirrors the shape expected by the
+/// email-recoverer contract.
+#[near_sdk::near(serializers = [json, borsh])]
+#[derive(Clone)]
+pub struct VerificationResult {
+    pub verified: bool,
+    pub account_id: String,
+    pub new_public_key: String,
+    pub from_address: String,
+    pub email_timestamp_ms: Option<u64>,
+}
+
 #[near(contract_state)]
 pub struct MockDkimVerifier {}
 
@@ -59,7 +72,7 @@ impl MockDkimVerifier {
         requested_by: AccountId,
         email_blob: String,
         #[callback_result] result: Result<Option<Value>, PromiseError>,
-    ) -> bool {
+    ) -> VerificationResult {
         env::log_str(&format!(
             "MockDkimVerifier::on_email_verification_result for {} (email_len={})",
             requested_by,
@@ -67,7 +80,18 @@ impl MockDkimVerifier {
         ));
 
         // In the real contract this would parse DKIM records and verify them.
-        // For the mock, treat any successful callback payload as "verified".
-        matches!(result, Ok(Some(_)))
+        // For the mock, treat any successful callback payload as "verified"
+        // and return a minimal VerificationResult.
+        let verified = matches!(result, Ok(Some(_)));
+
+        VerificationResult {
+            verified,
+            account_id: requested_by.to_string(),
+            // Use a simple, valid-looking public key string; callers that
+            // care about the actual key bytes can ignore this in tests.
+            new_public_key: "ed25519:1111111111111111111111111111111111111111111111".to_string(),
+            from_address: "mock@example.com".to_string(),
+            email_timestamp_ms: Some(env::block_timestamp_ms()),
+        }
     }
 }

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use email_recoverer_contract::{EmailRecoverer, RecoveryPolicy, HashedEmail};
+use email_recoverer_contract::{EmailRecoverer, RecoveryPolicy, HashedEmail, ProofInput};
 use near_sdk::test_utils::VMContextBuilder;
 use near_sdk::{testing_env, AccountId};
 use near_workspaces::types::Gas;
@@ -218,9 +218,30 @@ fn test_verify_zkemail_and_recover_does_not_panic() {
     );
 
     // Just ensure that calling the method constructs a promise without panicking.
-    let proof = vec![1u8, 2, 3];
-    let inputs = vec![4u8, 5, 6];
-    let _promise = contract.verify_zkemail_and_recover(proof, inputs);
+    let proof = ProofInput {
+        pi_a: ["0".to_string(), "0".to_string(), "1".to_string()],
+        pi_b: [
+            ["0".to_string(), "0".to_string()],
+            ["0".to_string(), "0".to_string()],
+            ["0".to_string(), "0".to_string()],
+        ],
+        pi_c: ["0".to_string(), "0".to_string(), "1".to_string()],
+    };
+    let public_inputs = vec!["dummy".to_string()];
+    let account_id = "alice.testnet".to_string();
+    let new_public_key =
+        "ed25519:111111111111111111111111111111111111111111111111111111111111".to_string();
+    let from_email = "alice@example.com".to_string();
+    let timestamp = "0".to_string();
+
+    let _promise = contract.verify_zkemail_and_recover(
+        proof,
+        public_inputs,
+        account_id,
+        new_public_key,
+        from_email,
+        timestamp,
+    );
 }
 
 #[test]
