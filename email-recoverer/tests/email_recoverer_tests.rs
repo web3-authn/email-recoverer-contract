@@ -1,7 +1,13 @@
 use anyhow::Result;
-use email_recoverer_contract::{EmailRecoverer, RecoveryPolicy, HashedEmail, ProofInput};
+use email_recoverer_contract::{
+    EmailRecoverer,
+    RecoveryPolicy,
+    HashedEmail,
+    ProofInput,
+    VerificationResult,
+};
 use near_sdk::test_utils::VMContextBuilder;
-use near_sdk::{testing_env, AccountId};
+use near_sdk::{testing_env, AccountId, env};
 use near_workspaces::types::Gas;
 use serde_json::json;
 
@@ -270,6 +276,60 @@ fn test_verify_dkim_and_recover_does_not_panic() {
     let email_blob = "From: alice@example.com\nTo: recover@web3authn.org\n\nTest"
         .to_string();
     let _promise = contract.verify_dkim_and_recover(email_blob);
+}
+
+#[test]
+fn test_dkim_from_with_display_name_matches_configured_email() {
+    // Set up context for a specific user account.
+    let mut context = VMContextBuilder::new();
+    context
+        .current_account_id("alice.testnet".parse().unwrap())
+        .signer_account_id("alice.testnet".parse().unwrap())
+        .predecessor_account_id("alice.testnet".parse().unwrap())
+        // Block timestamp in nanoseconds; corresponds to 1_000 ms.
+        .block_timestamp(1_000 * 1_000_000);
+    testing_env!(context.build());
+
+    // Initialize contract with a simple policy: 1 recent email required.
+    let mut contract = EmailRecoverer::new(
+        "zk-email-verifier.testnet".parse().unwrap(),
+        "email-dkim-verifier.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 1,
+            max_age_ms: 30 * 60 * 1000,
+        }),
+        Vec::new(),
+    );
+
+    // Pre-compute the hashed email exactly as the contract does for a bare address.
+    let canonical = "n6378056@gmail.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    // Configure this hashed email as a recovery email.
+    contract.set_recovery_emails(vec![hashed_email.clone()]);
+
+    // Simulate a DKIM verification result where the From: address includes a
+    // display name, e.g. "Pta <n6378056@gmail.com>".
+    let verification = VerificationResult {
+        verified: true,
+        account_id: "alice.testnet".to_string(),
+        new_public_key:
+            "ed25519:111111111111111111111111111111111111111111111111111111111111"
+                .to_string(),
+        from_address: "Pta <n6378056@gmail.com>".to_string(),
+        email_timestamp_ms: Some(1_000),
+    };
+
+    // Call the DKIM callback directly; this should treat the display-name form
+    // as matching the configured recovery email and mark it as verified.
+    contract.on_verify_dkim_result("dummy".to_string(), Ok(verification));
+
+    let recent = contract.get_recent_verified_emails();
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0], hashed_email);
 }
 
 /// Helper to compile the contract and create a sandbox + deployment.
