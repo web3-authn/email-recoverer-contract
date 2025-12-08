@@ -251,7 +251,7 @@ fn test_verify_zkemail_and_recover_does_not_panic() {
 }
 
 #[test]
-fn test_verify_dkim_and_recover_does_not_panic() {
+fn test_verify_email_onchain_and_recover_does_not_panic() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
@@ -273,9 +273,9 @@ fn test_verify_dkim_and_recover_does_not_panic() {
         ));
     testing_env!(context.build());
 
-    let email_blob = "From: alice@example.com\nTo: recover@web3authn.org\n\nTest"
-        .to_string();
-    let _promise = contract.verify_dkim_and_recover(email_blob);
+    let email_blob =
+        "From: alice@example.com\nTo: recover@web3authn.org\n\nTest".to_string();
+    let _promise = contract.verify_email_onchain_and_recover(email_blob);
 }
 
 #[test]
@@ -323,9 +323,10 @@ fn test_dkim_from_with_display_name_matches_configured_email() {
         email_timestamp_ms: Some(1_000),
     };
 
-    // Call the DKIM callback directly; this should treat the display-name form
-    // as matching the configured recovery email and mark it as verified.
-    contract.on_verify_dkim_result("dummy".to_string(), Ok(verification));
+    // Call the DKIM plaintext callback directly; this should treat the
+    // display-name form as matching the configured recovery email and mark it
+    // as verified.
+    contract.on_verify_email_onchain_result("dummy".to_string(), Ok(verification));
 
     let recent = contract.get_recent_verified_emails();
     assert_eq!(recent.len(), 1);

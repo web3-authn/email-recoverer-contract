@@ -111,16 +111,16 @@ This gives you:
 The DKIM/Outlayer path is designed so that a relayer attaches at least **0.01 NEAR** per verification request, while Outlayer may consume only a fraction of that. Any unused portion is handled inside the DKIM verifier contract.
 
 - **Inputs**
-  - Relayer calls `user.near::verify_dkim_and_recover(email_blob)` and attaches at least `0.01 NEAR` (matching the DKIM verifier’s `MIN_DEPOSIT`).
+  - Relayer calls `user.near::verify_email_onchain_and_recover(email_blob)` and attaches at least `0.01 NEAR` (matching the DKIM verifier’s `MIN_DEPOSIT`).
 
 - **Flow**
-  1. `EmailRecoverer::verify_dkim_and_recover`:
+  1. `EmailRecoverer::verify_email_onchain_and_recover`:
      - Forwards the full attached deposit to the global `EmailDkimVerifier` via `with_attached_deposit`, along with the relayer’s account ID as `payer_account_id`.
   2. `EmailDkimVerifier::request_email_verification`:
      - Uses `MIN_DEPOSIT` (currently 0.01 NEAR) as the DKIM/Outlayer budget.
      - Forwards only the portion needed (e.g. ~0.001 NEAR) to Outlayer.
      - Refunds any unused portion of the attached deposit directly to `payer_account_id`.
-  3. `EmailRecoverer::on_verify_dkim_result`:
+  3. `EmailRecoverer::on_verify_email_onchain_result`:
      - Receives `VerificationResult { verified, account_id, new_public_key, email_timestamp_ms }`.
      - Applies all normal checks (account binding, hashed email membership, `RecoveryPolicy`) and, if satisfied, adds the new full-access key.
 
