@@ -1,8 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "email-recoverer",
-    "zk-email-verifier-contract"
+    "email-recoverer"
 ]
 
 [profile.release]

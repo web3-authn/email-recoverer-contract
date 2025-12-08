@@ -1,18 +1,28 @@
-This document outlines how to implement an on‑chain verifier for zk.email proofs on NEAR, using Circom Groth16 circuits and arkworks, without trusting the relayer.
+This document describes how zk.email proof verification fits into the **email‑recoverer** system:
+
+- What the global `zk-email-verifier` contract is expected to do.
+- How off‑chain proving works.
+- How the `email-recoverer` contract in this repo talks to that verifier.
+
+The actual `zk-email-verifier` NEAR contract code now lives in a **separate repository**; this repo only contains the per‑account `email-recoverer` contract and the Rust interface it uses to call the global verifier.
 
 ---
 
 ## 1. Goals and Scope
 
-- Verify zk.email proofs on NEAR:
-  - Proofs are Groth16 over BN254, generated from Circom circuits.
-  - Public inputs encode only the fields we care about (e.g. `from_email_hash`, `account_id`, `new_public_key`, `nonce`, `dkim_public_key_hash`).
-- Keep the NEAR contract verifier:
-  - As small and gas‑efficient as possible.
-  - Independent of Circom tooling (no witness generation, no R1CS parsing).
+- Verify zk.email proofs on NEAR via a **global verifier contract** (deployed once) that:
+  - Accepts a Groth16 proof over BN254 generated from Circom circuits.
+  - Ensures the proof is bound to:
+    - A `near` `account_id` (the target account being recovered),
+    - A `new_public_key` to add as a full‑access key,
+    - A `from_email` address and timestamp.
+  - Returns a simple `VerificationResult` struct.
+- Keep the per‑account `email-recoverer` contract:
+  - Small and focused on policy (which emails are allowed, how many, recency window).
+  - Independent of circuit/arkworks details; it only calls the global verifier.
 - Off‑chain proving:
-  - Happens in a separate prover service (Node/Rust) using Circom + `snarkjs`/`rapidsnark` or `ark-circom`.
-  - The relayer only transports `{proof, publicInputs}`; it is not trusted to validate emails itself.
+  - Happens in a separate prover service (Node/Rust) using Circom + `snarkjs`/`rapidsnark` or `ark‑circom`.
+  - The relayer only transports `{proof, publicInputs}` and submits them to NEAR; it is not trusted to validate emails itself.
 
 ---
 
@@ -62,96 +72,75 @@ The relayer (Cloudflare Worker) calls this API and forwards `{proof, publicSigna
 
 ---
 
-## 3. On‑Chain: NEAR ZkEmailVerifier Contract
+## 3. On‑Chain: Global ZkEmailVerifier Contract (External Repo)
 
-**3.1 Arkworks Integration Strategy**
+The `ZkEmailVerifier` NEAR contract is implemented and built in a **separate repository**. From the perspective of this repo, we care about:
 
-- **Verification**: Use `ark-groth16` (part of `arkworks-rs`) directly in the NEAR contract. It supports `no_std` and is compatible with NEAR's WASM environment.
-- **Tooling**: Use `ark-circom` (from `circom-compat`) *off-chain* to parse Circom artifacts and generate the Rust constants for the `VerifyingKey`. We do *not* use `ark-circom` on-chain to avoid overhead (witness generation, WASM runtime) that is unnecessary for verification.
+- The **interface** exposed by that contract.
+- The **binding** guarantees it provides.
 
-**3.2 Dependencies**
+### 3.1 Interface expected by `email-recoverer`
 
-- In the NEAR contract, depend on a minimal arkworks stack:
-
-```toml
-[dependencies]
-ark-std      = { version = "0.4", default-features = false }
-ark-ff       = { version = "0.4", default-features = false }
-ark-ec       = { version = "0.4", default-features = false }
-ark-bn254    = { version = "0.4", default-features = false }
-ark-groth16  = { version = "0.4", default-features = false }
-ark-serialize = { version = "0.4", default-features = false }
-```
-
-- Configure NEAR crate to compile for `wasm32-unknown-unknown` with these crates, ensuring `std` features are disabled.
-
-**3.3 Embed verifying key and public input mapping**
-
-- Offline, write a small Rust script using `ark-circom` or `serde_json` that:
-  - Reads `verification_key.json` or the `.zkey`.
-  - Converts the G1/G2 points and pairing parameters into Rust constants:
-    - E.g. `const ALPHA_G1: G1Affine = G1Affine::new_unchecked(...);`
-  - Defines how `publicSignals` indices map to logical fields:
-    - `publicSignals[0] = dkim_public_key_hash`
-    - `publicSignals[1] = from_email_hash`
-    - `publicSignals[2] = account_id_hash`
-    - `publicSignals[3..]` = parts of `new_public_key`, `nonce`, etc.
-
-- Paste these constants into the NEAR `ZkEmailVerifier` contract.
-
-**3.4 Verifier entrypoint**
-
-- Contract interface (sketch):
+In `email-recoverer/src/zk_email_verifier.rs` we define the external interface:
 
 ```rust
-#[near_sdk::near(serializers = [json])]
-pub struct ZkEmailPublicInputs {
-    pub dkim_public_key_hash: Vec<u8>,
-    pub from_email_hash: Vec<u8>,
-    pub account_id: String,
-    pub new_public_key: Vec<u8>,
-    pub nonce: Vec<u8>,
-}
-
-#[near_sdk::near(serializers = [json])]
-pub struct ZkEmailVerificationResult {
-    pub verified: bool,
-    pub outputs: Option<ZkEmailPublicInputs>,
-}
-
-#[near_sdk::near(contract_state)]
-pub struct ZkEmailVerifier {
-    // DKIM Registry: domain_hash -> public_key_hash
-    pub dkim_registry: LookupMap<Vec<u8>, Vec<u8>>,
-}
-```
-
-- Main method:
-
-```rust
-impl ZkEmailVerifier {
-    pub fn verify(
+#[near_sdk::ext_contract(ext_zk_email_verifier)]
+pub trait ZkEmailVerifier {
+    /// Verify a zk-SNARK proof and ensure that the provided
+    /// `account_id`, `new_public_key`, `from_email`, and `timestamp`
+    /// are correctly bound into the public inputs.
+    fn verify_with_binding(
         &self,
-        proof_bytes: Vec<u8>,
-        public_signals: Vec<String>, // or Vec<Vec<u8>>
-    ) -> ZkEmailVerificationResult {
-        // 1. Decode proof_bytes into ark_groth16::Proof<BN254>.
-        // 2. Decode public_signals into field elements.
-        // 3. Call ark_groth16::verify_proof(&VK, &proof, &inputs).
-        // 4. If verified:
-        //    a. Map inputs to ZkEmailPublicInputs.
-        //    b. Verify dkim_public_key_hash against the on-chain registry (optional here, or in caller).
-        //    c. Return result.
-    }
+        proof: ProofInput,
+        public_inputs: Vec<String>,
+        account_id: String,
+        new_public_key: String,
+        from_email: String,
+        timestamp: String,
+    ) -> VerificationResult;
 }
 ```
 
-**3.5 DKIM Registry**
+The helper `verify_zkemail_and_recover` inside the same module calls this interface:
 
-- The system requires a **DKIM Registry** to map email domains (e.g., `gmail.com`) to their active DKIM public keys.
-- The circuit proves: "This email was signed by Key X".
-- The Registry confirms: "Key X is valid for gmail.com".
-- Without this, an attacker could generate a valid proof using their own key for a spoofed domain.
+```rust
+ext_zk_email_verifier::ext(zk_email_verifier.clone())
+    .with_static_gas(Gas::from_tgas(50))
+    .verify_with_binding(
+        proof,
+        public_inputs,
+        account_id,
+        new_public_key,
+        from_email,
+        timestamp,
+    )
+    .then(
+        ext_self::ext(env::current_account_id())
+            .with_static_gas(Gas::from_tgas(50))
+            .on_verify_zkemail_result(),
+    )
+```
+
+The verifier contract is responsible for:
+
+- Parsing the proof and public inputs.
+- Checking the Groth16 pairing equation using its embedded verifying key.
+- Ensuring the proof is bound to the exact `(account_id, new_public_key, from_email, timestamp)` values supplied.
+- Returning a `VerificationResult`:
+
+```rust
+#[near_sdk::near(serializers = [json, borsh])]
+#[derive(Clone)]
+pub struct VerificationResult {
+    pub verified: bool,
+    pub account_id: String,
+    pub new_public_key: String,
+    pub from_address: String,
+    pub email_timestamp_ms: Option<u64>,
+}
+```
+
+All arkworks / VK‑embedding details live in the external `zk-email-verifier` repo; this repo just relies on the interface above.
 
 ---
 
@@ -167,9 +156,11 @@ impl ZkEmailVerifier {
 
 - Validates request and sends payload to the Circom prover service (`/prove`).
 - Receives `{proof, publicSignals}`.
-- Submits NEAR tx to `bob.near::verify_zkemail_and_recover(proof, publicSignals)`:
-  - `bob.near` (zk-email-recovery contract) calls the global `ZkEmailVerifier::verify`.
-  - On success and policy satisfaction, `bob.near` calls `add_full_access_key(new_public_key)` on itself.
+- Submits NEAR tx to:
+  - `bob.near::verify_zkemail_and_recover(proof, publicSignals, account_id, new_public_key, from_email, timestamp)`
+  - `bob.near` is the per‑account `EmailRecoverer` contract in this repo.
+  - It invokes the global `zk-email-verifier` contract via `ext_zk_email_verifier::verify_with_binding`.
+  - On success and policy satisfaction, `bob.near` adds `new_public_key` as a full‑access key on itself.
 
 **4.3 Web3Authn contract**
 
@@ -177,26 +168,24 @@ impl ZkEmailVerifier {
 
 ---
 
-## 5. Implementation Phases
+## 5. Implementation Phases (High‑Level)
 
-1. **Verifier prototype**
-   - Hard‑code a tiny test circuit and verifying key.
-   - Implement Groth16 verification in a NEAR contract using `ark-groth16`.
-   - Benchmark gas/memory.
+1. **Off‑chain circuits + prover**
+   - Design/choose zk.email Circom circuits.
+   - Run trusted setup and build a prover service that exposes `{proof, publicSignals}`.
 
-2. **zk.email circuit integration**
-   - Swap the test VK for the real zk.email VK.
-   - Implement the **DKIM Registry** (can be a simple hardcoded map initially).
-   - Implement the Circom prover service.
+2. **Global zk-email-verifier contract (external repo)**
+   - Implement a NEAR contract that:
+     - Embeds the verifying key.
+     - Implements `verify_with_binding` with the interface above.
+     - Returns `VerificationResult`.
 
-3. **Recovery contract wiring**
-   - Implement per‑user `zk-email-recovery` contract that:
-     - Stores `recovery_emails` and timestamps.
-     - Calls `ZkEmailVerifier` and enforces email‑based policy before adding keys.
+3. **Recovery contract wiring (this repo)**
+   - Use `zk_email_verifier::verify_zkemail_and_recover` in `EmailRecoverer` to call the global verifier.
+   - Enforce email‑based recovery policy before adding keys.
 
 4. **Hardening**
-   - Add replay protection (nonces/timestamps).
-   - Add rate‑limits and logging.
-   - Optimize verifier constants and serialization for minimal gas.
+   - Add replay protection and timestamp checks.
+   - Add rate‑limits and logging at the relayer/verifier layers.
 
-This plan keeps the heavy proving logic off‑chain, uses Circom/zk.email for trustless email verification, and relies on a slim `ark-groth16` verifier compiled to NEAR WASM to validate proofs on‑chain.***
+In short: this repo no longer implements the zk-email verifier itself; it integrates with a shared global verifier contract using the `ZkEmailVerifier` interface defined in `email-recoverer/src/zk_email_verifier.rs`.
