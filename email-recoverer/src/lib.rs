@@ -167,9 +167,7 @@ impl EmailRecoverer {
         recent
     }
 
-    /// Compute whether the recovery policy is satisfied based on
-    /// `verified_timestamp` and `policy`.
-    /// ZK‑Email path: verify proof via global ZkEmailVerifier and recover if policy is satisfied.
+    /// Verify proof with ZkEmailVerifier and recover if policy is satisfied.
     pub fn verify_zkemail_and_recover(
         &mut self,
         proof: ProofInput,
