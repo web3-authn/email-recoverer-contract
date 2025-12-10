@@ -1,6 +1,5 @@
 use near_sdk::{env, log, Promise, PublicKey};
-
-use crate::{EmailRecoverer, HashedEmail, RecoveryPolicy};
+use crate::{EmailRecoverer, HashedEmail};
 
 impl EmailRecoverer {
     /// Compute whether the recovery policy is satisfied based on
@@ -94,7 +93,7 @@ impl EmailRecoverer {
         };
 
         log!("add_full_access_key_internal: adding full-access key for current account");
-        Promise::new(env::current_account_id())
+        let _ = Promise::new(env::current_account_id())
             .add_full_access_key(public_key);
     }
 

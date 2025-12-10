@@ -7,7 +7,7 @@ use serde_json::Value as JsonValue;
 
 mod utils;
 mod zk_email_verifier;
-mod outlayer;
+mod tee_outlayer_verifier;
 
 pub use crate::zk_email_verifier::ProofInput;
 
@@ -201,7 +201,7 @@ impl EmailRecoverer {
     /// account according to the configured policy.
     #[payable]
     pub fn verify_email_onchain_and_recover(&mut self, email_blob: String) -> Promise {
-        outlayer::verify_email_onchain_and_recover(&self.email_dkim_verifier, email_blob)
+        tee_outlayer_verifier::verify_email_onchain_and_recover(&self.email_dkim_verifier, email_blob)
     }
 
     /// TEE/encrypted path: ask the EmailDKIMVerifier to verify DKIM for the
@@ -211,7 +211,7 @@ impl EmailRecoverer {
         &mut self,
         encrypted_email_blob: JsonValue,
     ) -> Promise {
-        outlayer::verify_encrypted_email_and_recover(
+        tee_outlayer_verifier::verify_encrypted_email_and_recover(
             &self.email_dkim_verifier,
             encrypted_email_blob,
         )
@@ -223,7 +223,7 @@ impl EmailRecoverer {
         email_blob: String,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     ) {
-        outlayer::on_verify_email_onchain_result(self, email_blob, result)
+        tee_outlayer_verifier::on_verify_email_onchain_result(self, email_blob, result)
     }
 
     /// Callback after EmailDKIMVerifier finishes for encrypted emails.
@@ -231,6 +231,6 @@ impl EmailRecoverer {
         &mut self,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     ) {
-        outlayer::on_verify_encrypted_email_result(self, result)
+        tee_outlayer_verifier::on_verify_encrypted_email_result(self, result)
     }
 }

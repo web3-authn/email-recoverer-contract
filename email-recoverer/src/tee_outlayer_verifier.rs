@@ -8,7 +8,7 @@ use crate::{ext_self, EmailRecoverer, VerificationResult};
 pub trait EmailDkimVerifier {
     /// Start DKIM verification via Outlayer/TEE for a full email blob.
     ///
-    /// `params` is an optional JSON object that is forwarded verbatim to the
+    /// `context` is an optional JSON object that is forwarded verbatim to the
     /// global `EmailDkimVerifier` contract.
     #[payable]
     fn request_email_verification(
@@ -16,7 +16,7 @@ pub trait EmailDkimVerifier {
         payer_account_id: AccountId,
         email_blob: Option<String>,
         encrypted_email_blob: Option<JsonValue>,
-        params: Option<JsonValue>,
+        context: Option<JsonValue>,
     ) -> VerificationResult;
 }
 
@@ -36,8 +36,12 @@ pub fn verify_email_onchain_and_recover(
         // Forward the full attached deposit to the DKIM verifier.
         .with_attached_deposit(NearToken::from_yoctonear(attached))
         .with_static_gas(Gas::from_tgas(50))
-        .request_email_verification(caller.clone(), Some(email_blob.clone()), None, None)
-        .then(
+        .request_email_verification(
+            caller.clone(),
+            Some(email_blob.clone()),
+            None,
+            None
+        ).then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))
                 .on_verify_email_onchain_result(email_blob),
@@ -64,8 +68,12 @@ pub fn verify_encrypted_email_and_recover(
         // Forward the full attached deposit to the DKIM verifier.
         .with_attached_deposit(NearToken::from_yoctonear(attached))
         .with_static_gas(Gas::from_tgas(50))
-        .request_email_verification(caller.clone(), None, Some(encrypted_email_blob), None)
-        .then(
+        .request_email_verification(
+            caller.clone(),
+            None,
+            Some(encrypted_email_blob),
+            None
+        ).then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))
                 .on_verify_encrypted_email_result(),
