@@ -11,6 +11,7 @@ mod tee_outlayer_verifier;
 mod onchain_public_verifier;
 
 pub use crate::zk_email_verifier::{ProofInput, ZkEmailContext};
+pub use crate::tee_outlayer_verifier::AeadContext;
 
 /// Alias for a hashed email (e.g. H(email || salt)).
 pub type HashedEmail = Vec<u8>;
@@ -204,7 +205,7 @@ impl EmailRecoverer {
     pub fn verify_encrypted_email_and_recover(
         &mut self,
         encrypted_email_blob: JsonValue,
-        aead_context: Option<JsonValue>,
+        aead_context: AeadContext,
     ) -> Promise {
         tee_outlayer_verifier::verify_encrypted_email_and_recover(
             &self.email_dkim_verifier,

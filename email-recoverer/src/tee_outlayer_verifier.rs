@@ -1,5 +1,5 @@
 use near_sdk::{env, log, Gas, NearToken, Promise, PromiseError, AccountId};
-use serde_json::Value as JsonValue;
+use serde_json::{Value as JsonValue, json};
 use crate::{ext_self, EmailRecoverer, VerificationResult};
 
 /// External interface for the global EmailDKIMVerifier contract (TEE path).
@@ -19,6 +19,17 @@ pub trait EmailDkimVerifier {
     ) -> VerificationResult;
 }
 
+/// Context forwarded as AEAD associated data to the Outlayer worker
+/// by the EmailDKIMVerifier contract. This is used when decrypting
+/// the encrypted email blob.
+#[near_sdk::near(serializers = [json, borsh])]
+#[derive(Clone)]
+pub struct AeadContext {
+    pub account_id: String,
+    pub network_id: String,
+    pub payer_account_id: String,
+}
+
 /// TEE/encrypted path: calls EmailDKIMVerifier to verify DKIM for the
 /// given encrypted email blob and, recover account
 ///
@@ -32,12 +43,19 @@ pub trait EmailDkimVerifier {
 pub fn verify_encrypted_email_and_recover(
     email_dkim_verifier: &near_sdk::AccountId,
     encrypted_email_blob: JsonValue,
-    aead_context: Option<JsonValue>,
+    aead_context: AeadContext,
 ) -> Promise {
     log!("verify_encrypted_email_and_recover called (TEE/encrypted path)");
     let attached = env::attached_deposit().as_yoctonear();
-    let caller = env::predecessor_account_id(); // relay account
-    // relay account pays for Outlayer fees
+    let caller = env::predecessor_account_id(); // relay account pays for Outlayer fees
+
+    // fields alphabetized
+    let context_json = json!({
+        "account_id": aead_context.account_id,
+        "network_id": aead_context.network_id,
+        "payer_account_id": aead_context.payer_account_id,
+    });
+
     ext_email_dkim_verifier::ext(email_dkim_verifier.clone())
         // Forward the full attached deposit to the DKIM verifier.
         .with_attached_deposit(NearToken::from_yoctonear(attached))
@@ -46,7 +64,7 @@ pub fn verify_encrypted_email_and_recover(
             caller.clone(),
             None,
             Some(encrypted_email_blob),
-            aead_context,
+            Some(context_json),
         ).then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))
