@@ -8,6 +8,7 @@ use serde_json::Value as JsonValue;
 mod utils;
 mod zk_email_verifier;
 mod tee_outlayer_verifier;
+mod onchain_public_verifier;
 
 pub use crate::zk_email_verifier::ProofInput;
 
@@ -187,21 +188,12 @@ impl EmailRecoverer {
             timestamp,
         )
     }
-
     /// Callback after verify_zkemail_and_recover finishes.
     pub fn on_verify_zkemail_result(
         &mut self,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     ) {
         zk_email_verifier::on_verify_zkemail_result(self, result)
-    }
-
-    /// TEE/on-chain plaintext path: ask the EmailDKIMVerifier to verify DKIM
-    /// for the given email blob and, if successful, potentially recover this
-    /// account according to the configured policy.
-    #[payable]
-    pub fn verify_email_onchain_and_recover(&mut self, email_blob: String) -> Promise {
-        tee_outlayer_verifier::verify_email_onchain_and_recover(&self.email_dkim_verifier, email_blob)
     }
 
     /// TEE/encrypted path: ask the EmailDKIMVerifier to verify DKIM for the
@@ -216,21 +208,29 @@ impl EmailRecoverer {
             encrypted_email_blob,
         )
     }
-
-    /// Callback after EmailDKIMVerifier finishes for plaintext/on-chain emails.
-    pub fn on_verify_email_onchain_result(
-        &mut self,
-        email_blob: String,
-        #[callback_result] result: Result<VerificationResult, PromiseError>,
-    ) {
-        tee_outlayer_verifier::on_verify_email_onchain_result(self, email_blob, result)
-    }
-
     /// Callback after EmailDKIMVerifier finishes for encrypted emails.
     pub fn on_verify_encrypted_email_result(
         &mut self,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     ) {
         tee_outlayer_verifier::on_verify_encrypted_email_result(self, result)
+    }
+
+    /// TEE/on-chain plaintext path: ask the EmailDKIMVerifier to verify DKIM
+    /// for the given email blob and, if successful, potentially recover this
+    /// account according to the configured policy.
+    /// @deprecated Prefer `verify_encrypted_email_and_recover` (TEE encrypted path).
+    #[payable]
+    pub fn verify_email_onchain_and_recover(&mut self, email_blob: String) -> Promise {
+        onchain_public_verifier::verify_email_onchain_and_recover(&self.email_dkim_verifier, email_blob)
+    }
+    /// Callback after EmailDKIMVerifier finishes for plaintext/on-chain emails.
+    /// @deprecated Prefer `on_verify_encrypted_email_result` used by the encrypted TEE path.
+    pub fn on_verify_email_onchain_result(
+        &mut self,
+        email_blob: String,
+        #[callback_result] result: Result<VerificationResult, PromiseError>,
+    ) {
+        onchain_public_verifier::on_verify_email_onchain_result(self, email_blob, result)
     }
 }

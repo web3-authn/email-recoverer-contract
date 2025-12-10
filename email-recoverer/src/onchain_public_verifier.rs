@@ -1,3 +1,4 @@
+
 use near_sdk::{env, log, Gas, NearToken, Promise, PromiseError, AccountId};
 use serde_json::Value as JsonValue;
 use crate::{ext_self, EmailRecoverer, VerificationResult};
@@ -19,18 +20,14 @@ pub trait EmailDkimVerifier {
     ) -> VerificationResult;
 }
 
-/// TEE/encrypted path: ask the EmailDKIMVerifier to verify DKIM for the
-/// given encrypted email blob and, if successful, potentially recover this
-/// account according to the configured policy.
-///
-/// The `encrypted_email_blob` is forwarded as-is to the DKIM verifier
-/// contract; its exact structure is defined there (for example, it may
-/// contain a ciphertext and any associated metadata required for decryption).
-pub fn verify_encrypted_email_and_recover(
+
+/// TEE/on-chain plaintext path: ask the EmailDKIMVerifier to verify DKIM onchain.
+/// @deprecated Prefer the TEE encrypted path via `verify_encrypted_email_and_recover`.
+pub fn verify_email_onchain_and_recover(
     email_dkim_verifier: &near_sdk::AccountId,
-    encrypted_email_blob: JsonValue,
+    email_blob: String,
 ) -> Promise {
-    log!("verify_encrypted_email_and_recover called (TEE/encrypted path)");
+    log!("verify_email_onchain_and_recover called (TEE/on-chain plaintext path)");
     let attached = env::attached_deposit().as_yoctonear();
     let caller = env::predecessor_account_id(); // relay account
     // relay account pays for Outlayer fees
@@ -41,47 +38,48 @@ pub fn verify_encrypted_email_and_recover(
         .with_static_gas(Gas::from_tgas(50))
         .request_email_verification(
             caller.clone(),
+            Some(email_blob.clone()),
             None,
-            Some(encrypted_email_blob),
             None
         ).then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))
-                .on_verify_encrypted_email_result(),
+                .on_verify_email_onchain_result(email_blob),
         )
 }
-
-/// Callback after EmailDKIMVerifier finishes for encrypted emails.
-pub fn on_verify_encrypted_email_result(
+/// Callback after EmailDKIMVerifier finishes for plaintext/on-chain emails.
+/// @deprecated Prefer `on_verify_encrypted_email_result` used by the encrypted TEE path.
+pub fn on_verify_email_onchain_result(
     contract: &mut EmailRecoverer,
+    email_blob: String,
     result: Result<VerificationResult, PromiseError>,
 ) {
     // Callback is scheduled by this contract in
-    // `verify_encrypted_email_and_recover`. Predecessor should always be
+    // `verify_email_onchain_and_recover`. Predecessor should always be
     // this contract account.
     assert_eq!(
         env::predecessor_account_id(),
         env::current_account_id(),
-        "Unauthorized caller for on_verify_encrypted_email_result"
+        "Unauthorized caller for on_verify_email_onchain_result"
     );
 
     let verification = match result {
         Ok(v) => v,
         Err(_err) => {
-            log!("Encrypted email DKIM verification promise failed");
+            log!("Email DKIM verification promise failed");
             return;
         }
     };
 
     if !verification.verified {
-        log!("Encrypted email DKIM verification returned verified = false");
+        log!("Email DKIM verification returned verified = false");
         return;
     }
 
     let current = env::current_account_id().to_string();
     if verification.account_id != current {
         log!(
-            "Encrypted email DKIM verification account_id {} does not match current account {}",
+            "Email DKIM verification account_id {} does not match current account {}",
             verification.account_id,
             env::current_account_id()
         );
@@ -97,10 +95,16 @@ pub fn on_verify_encrypted_email_result(
         return;
     }
 
+    log!(
+        "Email DKIM verification succeeded for email blob of length {} and new key string length {}",
+        email_blob.len(),
+        verification.new_public_key.len()
+    );
+
     let email_ts = match verification.email_timestamp_ms {
         Some(ts) => ts,
         None => {
-            log!("Encrypted email DKIM verification succeeded but email_timestamp_ms is missing");
+            log!("Email DKIM verification succeeded but email_timestamp_ms is missing");
             return;
         }
     };
@@ -111,4 +115,3 @@ pub fn on_verify_encrypted_email_result(
         email_ts,
     );
 }
-
