@@ -19,22 +19,25 @@ pub trait EmailDkimVerifier {
     ) -> VerificationResult;
 }
 
-/// TEE/encrypted path: ask the EmailDKIMVerifier to verify DKIM for the
-/// given encrypted email blob and, if successful, potentially recover this
-/// account according to the configured policy.
+/// TEE/encrypted path: calls EmailDKIMVerifier to verify DKIM for the
+/// given encrypted email blob and, recover account
 ///
-/// The `encrypted_email_blob` is forwarded as-is to the DKIM verifier
-/// contract; its exact structure is defined there (for example, it may
-/// contain a ciphertext and any associated metadata required for decryption).
+/// @params `encrypted_email_blob`: forwarded to the DKIM verifier, then to Outlayer worker
+/// @params `aead_context`: used as AEAD associated data for decrypting email in worker:
+/// `{
+///    account_id": "...",
+///    network_id": "...",
+///    payer_account_id": "..."
+/// }`
 pub fn verify_encrypted_email_and_recover(
     email_dkim_verifier: &near_sdk::AccountId,
     encrypted_email_blob: JsonValue,
+    aead_context: Option<JsonValue>,
 ) -> Promise {
     log!("verify_encrypted_email_and_recover called (TEE/encrypted path)");
     let attached = env::attached_deposit().as_yoctonear();
     let caller = env::predecessor_account_id(); // relay account
     // relay account pays for Outlayer fees
-
     ext_email_dkim_verifier::ext(email_dkim_verifier.clone())
         // Forward the full attached deposit to the DKIM verifier.
         .with_attached_deposit(NearToken::from_yoctonear(attached))
@@ -43,7 +46,7 @@ pub fn verify_encrypted_email_and_recover(
             caller.clone(),
             None,
             Some(encrypted_email_blob),
-            None
+            aead_context,
         ).then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))
@@ -111,4 +114,3 @@ pub fn on_verify_encrypted_email_result(
         email_ts,
     );
 }
-

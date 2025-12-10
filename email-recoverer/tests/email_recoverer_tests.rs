@@ -4,6 +4,7 @@ use email_recoverer_contract::{
     RecoveryPolicy,
     HashedEmail,
     ProofInput,
+    ZkEmailContext,
     VerificationResult,
 };
 use near_sdk::test_utils::VMContextBuilder;
@@ -234,20 +235,15 @@ fn test_verify_zkemail_and_recover_does_not_panic() {
         pi_c: ["0".to_string(), "0".to_string(), "1".to_string()],
     };
     let public_inputs = vec!["dummy".to_string()];
-    let account_id = "alice.testnet".to_string();
-    let new_public_key =
-        "ed25519:111111111111111111111111111111111111111111111111111111111111".to_string();
-    let from_email = "alice@example.com".to_string();
-    let timestamp = "0".to_string();
+    let context = ZkEmailContext {
+        account_id: "alice.testnet".to_string(),
+        new_public_key:
+            "ed25519:111111111111111111111111111111111111111111111111111111111111".to_string(),
+        from_email: "alice@example.com".to_string(),
+        timestamp: "0".to_string(),
+    };
 
-    let _promise = contract.verify_zkemail_and_recover(
-        proof,
-        public_inputs,
-        account_id,
-        new_public_key,
-        from_email,
-        timestamp,
-    );
+    let _promise = contract.verify_zkemail_and_recover(proof, public_inputs, context);
 }
 
 #[test]

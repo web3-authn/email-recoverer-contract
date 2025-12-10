@@ -40,7 +40,7 @@ pub fn verify_email_onchain_and_recover(
             caller.clone(),
             Some(email_blob.clone()),
             None,
-            None
+            None // no context needed
         ).then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))

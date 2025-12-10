@@ -10,7 +10,7 @@ mod zk_email_verifier;
 mod tee_outlayer_verifier;
 mod onchain_public_verifier;
 
-pub use crate::zk_email_verifier::ProofInput;
+pub use crate::zk_email_verifier::{ProofInput, ZkEmailContext};
 
 /// Alias for a hashed email (e.g. H(email || salt)).
 pub type HashedEmail = Vec<u8>;
@@ -173,19 +173,13 @@ impl EmailRecoverer {
         &mut self,
         proof: ProofInput,
         public_inputs: Vec<String>,
-        account_id: String,
-        new_public_key: String,
-        from_email: String,
-        timestamp: String,
+        context: ZkEmailContext,
     ) -> Promise {
         zk_email_verifier::verify_zkemail_and_recover(
             &self.zk_email_verifier,
             proof,
             public_inputs,
-            account_id,
-            new_public_key,
-            from_email,
-            timestamp,
+            context,
         )
     }
     /// Callback after verify_zkemail_and_recover finishes.
@@ -198,14 +192,24 @@ impl EmailRecoverer {
 
     /// TEE/encrypted path: ask the EmailDKIMVerifier to verify DKIM for the
     /// given encrypted email blob and recover the account
+    ///
+    /// @params `encrypted_email_blob`: forwarded to the DKIM verifier, then to Outlayer worker
+    /// @params `aead_context`: used as AEAD associated data for decrypting email in worker:
+    /// `{
+    ///    account_id": "...",
+    ///    network_id": "...",
+    ///    payer_account_id": "..."
+    /// }`
     #[payable]
     pub fn verify_encrypted_email_and_recover(
         &mut self,
         encrypted_email_blob: JsonValue,
+        aead_context: Option<JsonValue>,
     ) -> Promise {
         tee_outlayer_verifier::verify_encrypted_email_and_recover(
             &self.email_dkim_verifier,
             encrypted_email_blob,
+            aead_context
         )
     }
     /// Callback after EmailDKIMVerifier finishes for encrypted emails.

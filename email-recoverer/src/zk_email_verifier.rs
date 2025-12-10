@@ -31,6 +31,18 @@ pub struct ProofInput {
     pub pi_c: [String; 3],
 }
 
+/// Context for a zk‑email recovery proof. These fields are
+/// bound into the public inputs of the circuit and must match
+/// the values encoded in the proof.
+#[near_sdk::near(serializers = [json, borsh])]
+#[derive(Clone)]
+pub struct ZkEmailContext {
+    pub account_id: String,
+    pub new_public_key: String,
+    pub from_email: String,
+    pub timestamp: String,
+}
+
 /// ZK‑Email path helpers: perform the cross‑contract call into the global
 /// ZkEmailVerifier and handle the callback, delegating recovery to the core
 /// policy helpers on `EmailRecoverer`.
@@ -39,16 +51,11 @@ pub fn verify_zkemail_and_recover(
     zk_email_verifier: &near_sdk::AccountId,
     proof: ProofInput,
     public_inputs: Vec<String>,
-    account_id: String,
-    new_public_key: String,
-    from_email: String,
-    timestamp: String,
+    context: ZkEmailContext,
 ) -> Promise {
-    log!("verify_zkemail_and_recover called (ZK‑Email path)");
-
-    // Cheap local binding: require the proof target account to be this account.
+    // Require proof target account to be this account.
     let current = env::current_account_id().to_string();
-    if account_id != current {
+    if context.account_id != current {
         env::panic_str("verify_zkemail_and_recover: account_id must match current account");
     }
 
@@ -57,10 +64,10 @@ pub fn verify_zkemail_and_recover(
         .verify_with_binding(
             proof,
             public_inputs,
-            account_id,
-            new_public_key,
-            from_email,
-            timestamp,
+            context.account_id,
+            context.new_public_key,
+            context.from_email,
+            context.timestamp,
         )
         .then(
             ext_self::ext(env::current_account_id())
