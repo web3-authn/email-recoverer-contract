@@ -5,17 +5,16 @@ use crate::{ext_self, EmailRecoverer, VerificationResult};
 /// External interface for the global EmailDKIMVerifier contract (TEE path).
 #[near_sdk::ext_contract(ext_email_dkim_verifier)]
 pub trait EmailDkimVerifier {
-    /// Start DKIM verification via Outlayer/TEE for a full email blob.
+    /// Start DKIM verification via Outlayer/TEE for an encrypted email blob.
     ///
-    /// `context` is an optional JSON object that is forwarded verbatim to the
-    /// global `EmailDkimVerifier` contract.
+    /// `aead_context` is required AEAD associated data forwarded to Outlayer worker
+    /// for email decryption
     #[payable]
-    fn request_email_verification(
+    fn request_email_verification_private(
         &mut self,
         payer_account_id: AccountId,
-        email_blob: Option<String>,
-        encrypted_email_blob: Option<JsonValue>,
-        context: Option<JsonValue>,
+        encrypted_email_blob: serde_json::Value,
+        aead_context: AeadContext,
     ) -> VerificationResult;
 }
 
@@ -49,22 +48,14 @@ pub fn verify_encrypted_email_and_recover(
     let attached = env::attached_deposit().as_yoctonear();
     let caller = env::predecessor_account_id(); // relay account pays for Outlayer fees
 
-    // fields alphabetized
-    let context_json = json!({
-        "account_id": aead_context.account_id,
-        "network_id": aead_context.network_id,
-        "payer_account_id": aead_context.payer_account_id,
-    });
-
     ext_email_dkim_verifier::ext(email_dkim_verifier.clone())
         // Forward the full attached deposit to the DKIM verifier.
         .with_attached_deposit(NearToken::from_yoctonear(attached))
         .with_static_gas(Gas::from_tgas(50))
-        .request_email_verification(
+        .request_email_verification_private(
             caller.clone(),
-            None,
-            Some(encrypted_email_blob),
-            Some(context_json),
+            encrypted_email_blob,
+            aead_context,
         ).then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))

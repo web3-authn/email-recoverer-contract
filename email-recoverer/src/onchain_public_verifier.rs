@@ -6,17 +6,12 @@ use crate::{ext_self, EmailRecoverer, VerificationResult};
 /// External interface for the global EmailDKIMVerifier contract (TEE path).
 #[near_sdk::ext_contract(ext_email_dkim_verifier)]
 pub trait EmailDkimVerifier {
-    /// Start DKIM verification via Outlayer/TEE for a full email blob.
-    ///
-    /// `context` is an optional JSON object that is forwarded verbatim to the
-    /// global `EmailDkimVerifier` contract.
+    /// Start DKIM verification onchain for a full email blob.
     #[payable]
-    fn request_email_verification(
+    fn request_email_verification_onchain(
         &mut self,
         payer_account_id: AccountId,
-        email_blob: Option<String>,
-        encrypted_email_blob: Option<JsonValue>,
-        context: Option<JsonValue>,
+        email_blob: String,
     ) -> VerificationResult;
 }
 
@@ -36,11 +31,9 @@ pub fn verify_email_onchain_and_recover(
         // Forward the full attached deposit to the DKIM verifier.
         .with_attached_deposit(NearToken::from_yoctonear(attached))
         .with_static_gas(Gas::from_tgas(50))
-        .request_email_verification(
+        .request_email_verification_onchain(
             caller.clone(),
-            Some(email_blob.clone()),
-            None,
-            None // no context needed
+            email_blob.clone()
         ).then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))
