@@ -64,9 +64,9 @@ pub struct RecoveryPolicy {
 
 - `max_age_ms`:
   - Maximum allowed age for each email verification (in milliseconds).
-  - Only verifications where `now_ms - verified_timestamp[email] <= max_age_ms` count as “recent”.
+  - Only verifications where `now_ms - verified_emails[email].timestamp <= max_age_ms` count as “recent”.
 
-The owner can update the policy via `set_policy(policy: RecoveryPolicy)`. When `set_recovery_emails` is called, any previous `verified_timestamp` entries are cleared.
+The owner can update the policy via `set_policy(policy: RecoveryPolicy)`. When `set_recovery_emails` is called, any previous `verified_emails` entries are cleared.
 
 ---
 
@@ -75,7 +75,16 @@ The owner can update the policy via `set_policy(policy: RecoveryPolicy)`. When `
 The contract keeps:
 
 - `recovery_emails: Vec<HashedEmail>`
-- `verified_timestamp: BTreeMap<HashedEmail, u64>`
+- `verified_emails: BTreeMap<HashedEmail, VerifiedRecoveryIntent>`
+
+where:
+
+```rust
+pub struct VerifiedRecoveryIntent {
+    pub timestamp: u64,
+    pub new_public_key: PublicKey,
+}
+```
 
 When a ZK‑Email or DKIM verification succeeds for a `hashed_email` and yields a `new_public_key`:
 
@@ -85,19 +94,23 @@ When a ZK‑Email or DKIM verification succeeds for a `hashed_email` and yields 
 2. It sets:
 
    ```rust
-   verified_timestamp[hashed_email] = env::block_timestamp_ms();
+   verified_emails[hashed_email] = VerifiedRecoveryIntent {
+       timestamp: email_timestamp_ms,
+       new_public_key: new_public_key,
+   };
    ```
 
-3. It counts how many configured `recovery_emails` have a recent verification:
+3. It counts how many configured `recovery_emails` have a recent verification **for the same `new_public_key`**:
 
    ```rust
    recent = number of emails e in recovery_emails
-            where now_ms - verified_timestamp[e] <= max_age_ms
+            where verified_emails[e].new_public_key == new_public_key
+              and now_ms - verified_emails[e].timestamp <= max_age_ms
    ```
 
 4. If `recent >= min_required_emails`, it proceeds to add the new key:
-   - Calls `add_full_access_key_internal(new_public_key_bytes)`, which will eventually be wired to a real NEAR `add_key` action.
-   - Otherwise, it leaves `verified_timestamp` updated but does not yet add the key.
+   - Calls `add_full_access_key_internal(new_public_key)`, which will eventually be wired to a real NEAR `add_key` action.
+   - Otherwise, it leaves `verified_emails` updated but does not yet add the key.
 
 This gives you:
 

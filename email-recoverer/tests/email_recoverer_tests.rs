@@ -8,7 +8,7 @@ use email_recoverer_contract::{
     VerificationResult,
 };
 use near_sdk::test_utils::VMContextBuilder;
-use near_sdk::{testing_env, AccountId, env};
+use near_sdk::{testing_env, AccountId, env, CurveType, PublicKey};
 use near_workspaces::types::Gas;
 use serde_json::json;
 
@@ -88,7 +88,9 @@ fn test_recovery_policy_one_of_two_recent() {
     // Simulate a successful verification of email1 "now".
     {
         let now_ms = 1_000_000;
-        contract.debug_set_verified_timestamp_for_testing(email1.clone(), now_ms);
+        let pk =
+            PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+        contract.debug_set_verified_email_for_testing(email1.clone(), pk, now_ms);
         assert_eq!(contract.get_recent_verified_emails().len(), 1);
     }
 }
@@ -120,10 +122,13 @@ fn test_recovery_policy_two_of_three_with_expiry() {
     let e3: HashedEmail = vec![3];
     contract.set_recovery_emails(vec![e1.clone(), e2.clone(), e3.clone()]);
 
+    let pk =
+        PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+
     // At time t = 10 ms, verify e1 and e2.
     let start_ms = 10;
-    contract.debug_set_verified_timestamp_for_testing(e1.clone(), start_ms);
-    contract.debug_set_verified_timestamp_for_testing(e2.clone(), start_ms);
+    contract.debug_set_verified_email_for_testing(e1.clone(), pk.clone(), start_ms);
+    contract.debug_set_verified_email_for_testing(e2.clone(), pk.clone(), start_ms);
 
     // At time t = 10 + max_age_ms - 1, both are still recent.
     let now_ms = start_ms + contract.get_policy().max_age_ms - 1;
@@ -150,6 +155,137 @@ fn test_recovery_policy_two_of_three_with_expiry() {
 
     let recent_after: Vec<HashedEmail> = contract.get_recent_verified_emails();
     assert_eq!(recent_after.len(), 0);
+}
+
+#[test]
+fn test_recovery_policy_is_scoped_to_new_public_key() {
+    let context = get_context("alice.testnet");
+    testing_env!(context.build());
+
+    let mut contract = EmailRecoverer::new(
+        "zk-email-verifier-v1.testnet".parse().unwrap(),
+        "email-dkim-verifier-v1.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 2,
+            max_age_ms: 30 * 60 * 1000,
+        }),
+        Vec::new(),
+    );
+
+    let email1: HashedEmail = vec![1];
+    let email2: HashedEmail = vec![2];
+    contract.set_recovery_emails(vec![email1.clone(), email2.clone()]);
+
+    let pk1 =
+        PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+    let pk2 =
+        PublicKey::from_parts(CurveType::ED25519, vec![1u8; 32]).expect("valid ed25519 key");
+
+    let now_ms = 1_000_000;
+    contract.debug_set_verified_email_for_testing(email1.clone(), pk1.clone(), now_ms);
+    contract.debug_set_verified_email_for_testing(email2.clone(), pk2.clone(), now_ms);
+
+    assert!(
+        !contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk1.clone()),
+        "Should not mix verified emails across different new_public_keys"
+    );
+    assert!(
+        !contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk2.clone()),
+        "Should not mix verified emails across different new_public_keys"
+    );
+
+    // If both emails are verified for the same key, the policy should be satisfied.
+    contract.debug_set_verified_email_for_testing(email1.clone(), pk2.clone(), now_ms);
+    assert!(
+        contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk2),
+        "Should satisfy policy once both verifications target the same new_public_key"
+    );
+}
+
+#[test]
+fn test_recovery_policy_only_counts_recent_emails_for_specific_new_public_key() {
+    let context = get_context("alice.testnet");
+    testing_env!(context.build());
+
+    let mut contract = EmailRecoverer::new(
+        "zk-email-verifier-v1.testnet".parse().unwrap(),
+        "email-dkim-verifier-v1.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 2,
+            max_age_ms: 1_000,
+        }),
+        Vec::new(),
+    );
+
+    let email1: HashedEmail = vec![1];
+    let email2: HashedEmail = vec![2];
+    let email3: HashedEmail = vec![3];
+    contract.set_recovery_emails(vec![email1.clone(), email2.clone(), email3.clone()]);
+
+    let pk_target =
+        PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+    let pk_other =
+        PublicKey::from_parts(CurveType::ED25519, vec![1u8; 32]).expect("valid ed25519 key");
+
+    let now_ms = 10_000;
+
+    // One recent email for target key.
+    contract.debug_set_verified_email_for_testing(email1.clone(), pk_target.clone(), now_ms);
+    // One stale email for target key (outside max_age_ms).
+    contract.debug_set_verified_email_for_testing(email2.clone(), pk_target.clone(), now_ms - 1_001);
+    // One recent email, but for a different key.
+    contract.debug_set_verified_email_for_testing(email3.clone(), pk_other.clone(), now_ms);
+
+    assert!(
+        !contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk_target.clone()),
+        "Should ignore stale verifications and verifications for other keys"
+    );
+    assert!(
+        !contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk_other.clone()),
+        "Should only count verifications targeting the provided new_public_key"
+    );
+
+    // Make the second email recent for the target key; now it should satisfy the policy.
+    contract.debug_set_verified_email_for_testing(email2.clone(), pk_target.clone(), now_ms - 500);
+    assert!(contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk_target));
+}
+
+#[test]
+fn test_recovery_policy_does_not_mix_new_public_keys_then_satisfies_for_pk1() {
+    let context = get_context("alice.testnet");
+    testing_env!(context.build());
+
+    let mut contract = EmailRecoverer::new(
+        "zk-email-verifier-v1.testnet".parse().unwrap(),
+        "email-dkim-verifier-v1.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 2,
+            max_age_ms: 30 * 60 * 1000,
+        }),
+        Vec::new(),
+    );
+
+    let email1: HashedEmail = vec![1];
+    let email2: HashedEmail = vec![2];
+    contract.set_recovery_emails(vec![email1.clone(), email2.clone()]);
+
+    let pk1 =
+        PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+    let pk2 =
+        PublicKey::from_parts(CurveType::ED25519, vec![1u8; 32]).expect("valid ed25519 key");
+
+    let now_ms = 1_000_000;
+    contract.debug_set_verified_email_for_testing(email1.clone(), pk1.clone(), now_ms);
+    contract.debug_set_verified_email_for_testing(email2.clone(), pk2.clone(), now_ms);
+
+    // One verification for pk1 and one for pk2 should NOT satisfy the policy for either key.
+    assert!(!contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk1.clone()));
+    assert!(!contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk2.clone()));
+
+    // Add a second verification targeting pk1; now pk1 should satisfy the policy.
+    contract.debug_set_verified_email_for_testing(email2.clone(), pk1.clone(), now_ms);
+    assert!(contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk1));
+    assert!(!contract.debug_is_recovery_policy_satisfied_for_testing(now_ms, pk2));
 }
 
 #[test]
@@ -312,9 +448,9 @@ fn test_dkim_from_with_display_name_matches_configured_email() {
     let verification = VerificationResult {
         verified: true,
         account_id: "alice.testnet".to_string(),
-        new_public_key:
-            "ed25519:111111111111111111111111111111111111111111111111111111111111"
-                .to_string(),
+        new_public_key: String::from(
+            &PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key"),
+        ),
         from_address: "Pta <n6378056@gmail.com>".to_string(),
         email_timestamp_ms: Some(1_000),
     };

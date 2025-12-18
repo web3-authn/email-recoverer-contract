@@ -1,6 +1,6 @@
 use near_sdk::{
     env, near, ext_contract,
-    AccountId, Promise, PromiseError
+    PublicKey, AccountId, Promise, PromiseError
 };
 use std::collections::BTreeMap;
 use serde_json::Value as JsonValue;
@@ -44,6 +44,13 @@ pub struct VerificationResult {
     pub email_timestamp_ms: Option<u64>,
 }
 
+#[near_sdk::near(serializers = [json, borsh])]
+#[derive(Clone)]
+struct VerifiedRecoveryIntent {
+    timestamp: u64,
+    new_public_key: PublicKey,
+}
+
 /// Internal callbacks on this contract used for cross‑contract promises.
 #[ext_contract(ext_self)]
 pub trait EmailRecovererCallbacks {
@@ -67,8 +74,8 @@ pub trait EmailRecovererCallbacks {
 pub struct EmailRecoverer {
     /// Configured recovery emails (hashed).
     recovery_emails: Vec<HashedEmail>,
-    /// Last successful verification timestamp per recovery email.
-    verified_timestamp: BTreeMap<HashedEmail, u64>,
+    /// Last successful verification intent per recovery email.
+    verified_emails: BTreeMap<HashedEmail, VerifiedRecoveryIntent>,
     /// Recovery policy.
     policy: RecoveryPolicy,
     /// Global ZK‑Email verifier contract account ID.
@@ -101,7 +108,7 @@ impl EmailRecoverer {
 
         Self {
             recovery_emails,
-            verified_timestamp: BTreeMap::new(),
+            verified_emails: BTreeMap::new(),
             policy: policy.unwrap_or_default(),
             zk_email_verifier,
             email_dkim_verifier,
@@ -120,7 +127,7 @@ impl EmailRecoverer {
         self.assert_owner();
         self.recovery_emails = recovery_emails;
         // Reset timestamps when changing the set.
-        self.verified_timestamp.clear();
+        self.verified_emails.clear();
     }
 
     pub fn get_recovery_emails(&self) -> Vec<HashedEmail> {
@@ -160,8 +167,8 @@ impl EmailRecoverer {
         let now_ms = env::block_timestamp_ms();
         let mut recent = Vec::new();
         for email in &self.recovery_emails {
-            if let Some(ts) = self.verified_timestamp.get(email) {
-                if now_ms.saturating_sub(*ts) <= self.policy.max_age_ms {
+            if let Some(intent) = self.verified_emails.get(email) {
+                if now_ms.saturating_sub(intent.timestamp) <= self.policy.max_age_ms {
                     recent.push(email.clone());
                 }
             }

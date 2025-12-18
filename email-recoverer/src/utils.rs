@@ -1,14 +1,20 @@
 use near_sdk::{env, log, Promise, PublicKey};
-use crate::{EmailRecoverer, HashedEmail};
+use crate::{EmailRecoverer, HashedEmail, VerifiedRecoveryIntent};
 
 impl EmailRecoverer {
     /// Compute whether the recovery policy is satisfied based on
-    /// `verified_timestamp` and `policy`.
-    pub(crate) fn is_recovery_policy_satisfied(&self, now_ms: u64) -> bool {
+    /// `verified_emails` and `policy`, scoped to a specific `new_public_key`.
+    pub(crate) fn is_recovery_policy_satisfied(
+        &self,
+        now_ms: u64,
+        new_public_key: &PublicKey,
+    ) -> bool {
         let mut num_recent = 0u8;
         for email in &self.recovery_emails {
-            if let Some(ts) = self.verified_timestamp.get(email) {
-                if now_ms.saturating_sub(*ts) <= self.policy.max_age_ms {
+            if let Some(intent) = self.verified_emails.get(email) {
+                if &intent.new_public_key == new_public_key
+                    && now_ms.saturating_sub(intent.timestamp) <= self.policy.max_age_ms
+                {
                     num_recent = num_recent.saturating_add(1);
                 }
             }
@@ -21,12 +27,26 @@ impl EmailRecoverer {
     pub(crate) fn mark_verified_and_maybe_recover(
         &mut self,
         hashed_email: HashedEmail,
-        new_public_key: Vec<u8>,
+        new_public_key: String,
         timestamp_ms: u64,
     ) {
-        self.verified_timestamp.insert(hashed_email, timestamp_ms);
+        let new_public_key: PublicKey = match new_public_key.parse() {
+            Ok(pk) => pk,
+            Err(_err) => {
+                log!("mark_verified_and_maybe_recover: failed to parse new_public_key");
+                return;
+            }
+        };
 
-        if !self.is_recovery_policy_satisfied(timestamp_ms) {
+        self.verified_emails.insert(
+            hashed_email,
+            VerifiedRecoveryIntent {
+                timestamp: timestamp_ms,
+                new_public_key: new_public_key.clone(),
+            },
+        );
+
+        if !self.is_recovery_policy_satisfied(timestamp_ms, &new_public_key) {
             log!(
                 "Recovery policy not yet satisfied; recent verified emails insufficient (min_required = {})",
                 self.policy.min_required_emails
@@ -75,35 +95,36 @@ impl EmailRecoverer {
     }
 
     /// Internal helper to actually add a full‑access key to this account.
-    pub(crate) fn add_full_access_key_internal(&self, public_key_bytes: Vec<u8>) {
-        let key_str = match String::from_utf8(public_key_bytes) {
-            Ok(s) => s,
-            Err(_err) => {
-                log!("add_full_access_key_internal: public key is not valid UTF-8");
-                return;
-            }
-        };
-
-        let public_key: PublicKey = match key_str.parse() {
-            Ok(pk) => pk,
-            Err(_err) => {
-                log!("add_full_access_key_internal: failed to parse public key string");
-                return;
-            }
-        };
-
+    pub(crate) fn add_full_access_key_internal(&self, public_key: PublicKey) {
         log!("add_full_access_key_internal: adding full-access key for current account");
         let _ = Promise::new(env::current_account_id())
             .add_full_access_key(public_key);
     }
 
-    /// Testing/debug helper: manually set the verified timestamp for a given
+    /// Testing/debug helper: manually set the verified intent for a given
     /// hashed email. This is not called from production code.
-    pub fn debug_set_verified_timestamp_for_testing(
+    pub fn debug_set_verified_email_for_testing(
         &mut self,
         email: HashedEmail,
+        new_public_key: PublicKey,
         timestamp_ms: u64,
     ) {
-        self.verified_timestamp.insert(email, timestamp_ms);
+        self.verified_emails.insert(
+            email,
+            VerifiedRecoveryIntent {
+                timestamp: timestamp_ms,
+                new_public_key,
+            },
+        );
+    }
+
+    /// Testing/debug helper: check whether the policy is satisfied for the
+    /// given `new_public_key` at `now_ms`.
+    pub fn debug_is_recovery_policy_satisfied_for_testing(
+        &self,
+        now_ms: u64,
+        new_public_key: PublicKey,
+    ) -> bool {
+        self.is_recovery_policy_satisfied(now_ms, &new_public_key)
     }
 }

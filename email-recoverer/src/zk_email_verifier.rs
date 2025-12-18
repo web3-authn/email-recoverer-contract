@@ -2,7 +2,7 @@ use near_sdk::{env, log, Gas, Promise, PromiseError};
 
 use crate::{ext_self, EmailRecoverer, VerificationResult};
 
-/// External interface for the global ZK‑Email verifier contract.
+/// External interface for the global [zk-email] verifier contract.
 #[near_sdk::ext_contract(ext_zk_email_verifier)]
 pub trait ZkEmailVerifier {
     /// Verify a zk-SNARK proof and ensure that the provided
@@ -19,7 +19,7 @@ pub trait ZkEmailVerifier {
     ) -> VerificationResult;
 }
 
-/// Groth16 proof input used by the ZK‑Email verifier.
+/// Groth16 proof input used by the [zk-email] verifier.
 #[near_sdk::near(serializers = [json, borsh])]
 #[derive(Clone)]
 pub struct ProofInput {
@@ -31,7 +31,7 @@ pub struct ProofInput {
     pub pi_c: [String; 3],
 }
 
-/// Context for a zk‑email recovery proof. These fields are
+/// Context for a [zk-email] recovery proof. These fields are
 /// bound into the public inputs of the circuit and must match
 /// the values encoded in the proof.
 #[near_sdk::near(serializers = [json, borsh])]
@@ -43,7 +43,7 @@ pub struct ZkEmailContext {
     pub timestamp: String,
 }
 
-/// ZK‑Email path helpers: perform the cross‑contract call into the global
+/// [zk-email] path helpers: perform the cross‑contract call into the global
 /// ZkEmailVerifier and handle the callback, delegating recovery to the core
 /// policy helpers on `EmailRecoverer`.
 
@@ -91,20 +91,20 @@ pub fn on_verify_zkemail_result(
     let verification = match result {
         Ok(v) => v,
         Err(_err) => {
-            log!("ZK‑Email verification promise failed");
+            log!("[zk-email] verification promise failed");
             return;
         }
     };
 
     if !verification.verified {
-        log!("ZK‑Email verification returned verified = false");
+        log!("[zk-email] verification returned verified = false");
         return;
     }
 
     let current = env::current_account_id().to_string();
     if verification.account_id != current {
         log!(
-            "ZK‑Email verification account_id {} does not match current account {}",
+            "[zk-email] verification account_id {} does not match current account {}",
             verification.account_id,
             env::current_account_id()
         );
@@ -114,21 +114,21 @@ pub fn on_verify_zkemail_result(
     // Compute hashed email from the proved From: address and ensure it is configured.
     let hashed_email = contract.hash_from_email_for_current_account(&verification.from_address);
     if !contract.is_configured_recovery_email(&hashed_email) {
-        log!("ZK‑Email From: email is not in configured recovery_emails");
+        log!("[zk-email] From: email is not in configured recovery_emails");
         return;
     }
 
     let timestamp_ms = match verification.email_timestamp_ms {
         Some(ts) => ts,
         None => {
-            log!("ZK‑Email verification succeeded but email_timestamp_ms is missing");
+            log!("[zk-email] verification succeeded but email_timestamp_ms is missing");
             return;
         }
     };
 
     contract.mark_verified_and_maybe_recover(
         hashed_email,
-        verification.new_public_key.clone().into_bytes(),
+        verification.new_public_key.clone(),
         timestamp_ms,
     );
 }

@@ -104,7 +104,7 @@ pub fn on_verify_email_onchain_result(
 
     contract.mark_verified_and_maybe_recover(
         hashed_email,
-        verification.new_public_key.clone().into_bytes(),
+        verification.new_public_key.clone(),
         email_ts,
     );
 }

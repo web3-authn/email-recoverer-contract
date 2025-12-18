@@ -44,7 +44,7 @@ pub fn verify_encrypted_email_and_recover(
     encrypted_email_blob: JsonValue,
     aead_context: AeadContext,
 ) -> Promise {
-    log!("verify_encrypted_email_and_recover called (TEE/encrypted path)");
+
     let attached = env::attached_deposit().as_yoctonear();
     let caller = env::predecessor_account_id(); // relay account pays for Outlayer fees
 
@@ -119,7 +119,7 @@ pub fn on_verify_encrypted_email_result(
 
     contract.mark_verified_and_maybe_recover(
         hashed_email,
-        verification.new_public_key.clone().into_bytes(),
+        verification.new_public_key.clone(),
         email_ts,
     );
 }
