@@ -1,4 +1,4 @@
-use near_sdk::{env, log, Gas, Promise, PromiseError};
+use near_sdk::{env, log, Gas, Promise, PromiseError, PublicKey};
 
 use crate::{ext_self, EmailRecoverer, VerificationResult};
 
@@ -115,6 +115,19 @@ pub fn on_verify_zkemail_result(
     let hashed_email = contract.hash_from_email_for_current_account(&verification.from_address);
     if !contract.is_configured_recovery_email(&hashed_email) {
         log!("[zk-email] From: email is not in configured recovery_emails");
+        return;
+    }
+
+    let new_pk: PublicKey = match verification.new_public_key.parse() {
+        Ok(pk) => pk,
+        Err(_err) => {
+            log!("[zk-email] invalid new_public_key in verification result");
+            return;
+        }
+    };
+
+    if !contract.consume_pending_recovery_intent(&hashed_email, &new_pk) {
+        log!("[zk-email] verification result does not match any pending recovery intent");
         return;
     }
 

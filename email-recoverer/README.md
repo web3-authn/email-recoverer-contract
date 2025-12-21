@@ -33,6 +33,7 @@ The contract uses `HashedEmail = Vec<u8>` for configured recovery emails:
   - Append a single ASCII pipe: `b'|'`.
   - Append `account_id` as UTF‑8 bytes.
   - Compute `SHA256` over that byte sequence; the 32‑byte digest is stored as `HashedEmail`.
+  - The contract enforces that `HashedEmail` values are exactly 32 bytes.
 
 **Implications**
 
@@ -60,11 +61,16 @@ pub struct RecoveryPolicy {
 - `min_required_emails`:
   - `1` → single-email recovery (1‑of‑M).
   - `N` → N‑of‑M social recovery (e.g. 2‑of‑3).
-  - `M` is `recovery_emails.len()`.
+  - `M` is `recovery_emails.len()` (unique configured emails).
 
 - `max_age_ms`:
   - Maximum allowed age for each email verification (in milliseconds).
   - Only verifications where `now_ms - verified_emails[email].timestamp <= max_age_ms` count as “recent”.
+
+**Validation and bounds**
+
+- The contract enforces `1 <= min_required_emails <= recovery_emails.len()`.
+- The contract enforces a maximum of 20 configured recovery emails to bound worst-case state and gas.
 
 The owner can update the policy via `set_policy(policy: RecoveryPolicy)`. When `set_recovery_emails` is called, any previous `verified_emails` entries are cleared.
 
@@ -74,7 +80,7 @@ The owner can update the policy via `set_policy(policy: RecoveryPolicy)`. When `
 
 The contract keeps:
 
-- `recovery_emails: Vec<HashedEmail>`
+- `recovery_emails: BTreeSet<HashedEmail>` (unique set)
 - `verified_emails: BTreeMap<HashedEmail, VerifiedRecoveryIntent>`
 
 where:
@@ -124,7 +130,7 @@ This gives you:
 The DKIM/Outlayer path is designed so that a relayer attaches at least **0.01 NEAR** per verification request, while Outlayer may consume only a fraction of that. Any unused portion is handled inside the DKIM verifier contract.
 
 - **Inputs**
-  - Relayer calls `user.near::verify_email_onchain_and_recover(email_blob)` and attaches at least `0.01 NEAR` (matching the DKIM verifier’s `MIN_DEPOSIT`).
+  - Relayer calls `user.near::verify_email_onchain_and_recover(email_blob, expected_hashed_email, expected_new_public_key)` and attaches at least `0.01 NEAR` (matching the DKIM verifier’s `MIN_DEPOSIT`).
 
 - **Flow**
   1. `EmailRecoverer::verify_email_onchain_and_recover`:

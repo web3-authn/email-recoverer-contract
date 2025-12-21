@@ -3,7 +3,7 @@
 
 `deploy.sh` only deploys/initializes a normal contract on CONTRACT_ID (e.g. w3a-email-recoverer-v1.testnet); it does not touch the global contract code published via `deploy-as-global.sh`.
 
-`deploy.sh` overwrites the code on the `w3a-email-recoverer-v1.testnet` account and calls `new()`.
+`deploy.sh` overwrites the code on the `w3a-email-recoverer-v1.testnet` account and calls `init_email_recovery()`.
 - It affects what NearBlocks shows and what you get when you call methods directly on w3a-email-recoverer-v1.testnet.
 
 The global contract created with `deploy-global.sh`:

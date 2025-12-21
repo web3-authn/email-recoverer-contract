@@ -1,5 +1,5 @@
 use near_sdk::{env, log, Promise, PublicKey};
-use crate::{EmailRecoverer, HashedEmail, VerifiedRecoveryIntent};
+use crate::{ALLOWED_EMAIL_TIMESTAMP_SKEW_MS, EmailRecoverer, HashedEmail, VerifiedRecoveryIntent};
 
 impl EmailRecoverer {
     /// Compute whether the recovery policy is satisfied based on
@@ -12,6 +12,11 @@ impl EmailRecoverer {
         let mut num_recent = 0u8;
         for email in &self.recovery_emails {
             if let Some(intent) = self.verified_emails.get(email) {
+                // Reject unreasonably future-dated timestamps (clock skew allowance).
+                if intent.timestamp > now_ms.saturating_add(ALLOWED_EMAIL_TIMESTAMP_SKEW_MS) {
+                    continue;
+                }
+
                 if &intent.new_public_key == new_public_key
                     && now_ms.saturating_sub(intent.timestamp) <= self.policy.max_age_ms
                 {
@@ -30,6 +35,30 @@ impl EmailRecoverer {
         new_public_key: String,
         timestamp_ms: u64,
     ) {
+        let now_ms = env::block_timestamp_ms();
+
+        // Enforce that the email timestamp is plausibly close to on-chain time:
+        // - not too far in the future (skew window)
+        // - not too old (outside policy max_age_ms)
+        if timestamp_ms > now_ms.saturating_add(ALLOWED_EMAIL_TIMESTAMP_SKEW_MS) {
+            log!(
+                "mark_verified_and_maybe_recover: rejecting future email timestamp {} (now {})",
+                timestamp_ms,
+                now_ms
+            );
+            return;
+        }
+
+        if now_ms.saturating_sub(timestamp_ms) > self.policy.max_age_ms {
+            log!(
+                "mark_verified_and_maybe_recover: rejecting stale email timestamp {} (now {}, max_age_ms {})",
+                timestamp_ms,
+                now_ms,
+                self.policy.max_age_ms
+            );
+            return;
+        }
+
         let new_public_key: PublicKey = match new_public_key.parse() {
             Ok(pk) => pk,
             Err(_err) => {
@@ -46,7 +75,7 @@ impl EmailRecoverer {
             },
         );
 
-        if !self.is_recovery_policy_satisfied(timestamp_ms, &new_public_key) {
+        if !self.is_recovery_policy_satisfied(now_ms, &new_public_key) {
             log!(
                 "Recovery policy not yet satisfied; recent verified emails insufficient (min_required = {})",
                 self.policy.min_required_emails
@@ -54,6 +83,9 @@ impl EmailRecoverer {
             return;
         }
 
+        // Clear state after a successful recovery attempt so previous verified
+        // intents cannot be reused for subsequent recoveries.
+        self.verified_emails.clear();
         self.add_full_access_key_internal(new_public_key);
     }
 
@@ -79,7 +111,7 @@ impl EmailRecoverer {
     /// Check whether the given hashed email is present in the configured
     /// recovery emails set.
     pub(crate) fn is_configured_recovery_email(&self, hashed_email: &HashedEmail) -> bool {
-        self.recovery_emails.iter().any(|e| e == hashed_email)
+        self.recovery_emails.contains(hashed_email)
     }
 
     /// Hash a canonical email address using the current account ID as salt:
@@ -103,6 +135,7 @@ impl EmailRecoverer {
 
     /// Testing/debug helper: manually set the verified intent for a given
     /// hashed email. This is not called from production code.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn debug_set_verified_email_for_testing(
         &mut self,
         email: HashedEmail,
@@ -120,6 +153,7 @@ impl EmailRecoverer {
 
     /// Testing/debug helper: check whether the policy is satisfied for the
     /// given `new_public_key` at `now_ms`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn debug_is_recovery_policy_satisfied_for_testing(
         &self,
         now_ms: u64,

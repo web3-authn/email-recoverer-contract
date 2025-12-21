@@ -9,7 +9,7 @@ At a high level:
   - Attached to individual user accounts (e.g. `alice.near`, `berp61-w3a-v1.testnet`) via `UseGlobalContract`, so each account gets its own state but shares the same code.
 - Each user account that opts in:
   - Attaches the global `email-recoverer` code to their own account.
-  - Calls `new(...)` on `<user>.near` to configure:
+  - Calls `init_email_recovery(...)` on `<user>.near` to configure:
     - Which recovery emails are allowed (stored as hashed emails),
     - A `RecoveryPolicy` (1‑of‑M or N‑of‑M, with a time window).
 
@@ -41,7 +41,7 @@ In practice:
 - Deploys the `email-dkim-verifier` and `zk-email-verifier` contracts as shared verifiers.
 - For each user that opts in:
   - Attaches the global `email-recoverer` code to their account with `UseGlobalContract`,
-  - Initializes it via `new(...)` with appropriate verifier account IDs and policy,
+  - Initializes it via `init_email_recovery(...)` with appropriate verifier account IDs and policy,
   - Updates recovery emails over time via `set_recovery_emails` and `set_policy`.
 
 End-users never see the global contracts directly; they interact with their own account (`<user>.near`), while relayers and verifiers handle the DKIM/ZK proof generation and on-chain verification.***

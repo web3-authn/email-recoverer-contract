@@ -1,5 +1,5 @@
-use near_sdk::{env, log, Gas, NearToken, Promise, PromiseError, AccountId};
-use serde_json::{Value as JsonValue, json};
+use near_sdk::{env, log, Gas, NearToken, Promise, PromiseError, AccountId, PublicKey};
+use serde_json::Value as JsonValue;
 use crate::{ext_self, EmailRecoverer, VerificationResult};
 
 /// External interface for the global EmailDKIMVerifier contract (TEE path).
@@ -106,6 +106,19 @@ pub fn on_verify_encrypted_email_result(
 
     if !contract.is_configured_recovery_email(&hashed_email) {
         log!("From: email is not in configured recovery_emails");
+        return;
+    }
+
+    let new_pk: PublicKey = match verification.new_public_key.parse() {
+        Ok(pk) => pk,
+        Err(_err) => {
+            log!("Encrypted email DKIM verification returned invalid new_public_key");
+            return;
+        }
+    };
+
+    if !contract.consume_pending_recovery_intent(&hashed_email, &new_pk) {
+        log!("Encrypted email DKIM verification result does not match any pending recovery intent");
         return;
     }
 

@@ -3,6 +3,7 @@ use email_recoverer_contract::{
     EmailRecoverer,
     RecoveryPolicy,
     HashedEmail,
+    HASHED_EMAIL_LEN,
     ProofInput,
     ZkEmailContext,
     VerificationResult,
@@ -11,6 +12,10 @@ use near_sdk::test_utils::VMContextBuilder;
 use near_sdk::{testing_env, AccountId, env, CurveType, PublicKey};
 use near_workspaces::types::Gas;
 use serde_json::json;
+
+fn test_hashed_email(byte: u8) -> HashedEmail {
+    vec![byte; HASHED_EMAIL_LEN]
+}
 
 fn get_context(account_id: &str) -> VMContextBuilder {
     let mut builder = VMContextBuilder::new();
@@ -28,11 +33,11 @@ fn test_init_and_get_policy() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let contract = EmailRecoverer::new(
+    let contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         None,
-        Vec::new(),
+        vec![test_hashed_email(0)],
     );
 
     let policy = contract.get_policy();
@@ -45,22 +50,24 @@ fn test_set_and_get_recovery_emails() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         None,
-        Vec::new(),
+        vec![test_hashed_email(0)],
     );
 
-    let email1: HashedEmail = vec![1, 2, 3];
-    let email2: HashedEmail = vec![4, 5, 6];
+    let email1: HashedEmail = test_hashed_email(1);
+    let email2: HashedEmail = test_hashed_email(2);
 
     contract.set_recovery_emails(vec![email1.clone(), email2.clone()]);
     let stored = contract.get_recovery_emails();
 
-    assert_eq!(stored.len(), 2);
-    assert_eq!(stored[0], email1);
-    assert_eq!(stored[1], email2);
+    let mut stored_sorted = stored;
+    stored_sorted.sort();
+    let mut expected = vec![email1, email2];
+    expected.sort();
+    assert_eq!(stored_sorted, expected);
 }
 
 #[test]
@@ -68,18 +75,18 @@ fn test_recovery_policy_one_of_two_recent() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier-v1.testnet".parse().unwrap(),
         "email-dkim-verifier-v1.testnet".parse().unwrap(),
         Some(RecoveryPolicy {
             min_required_emails: 1,
             max_age_ms: 30 * 60 * 1000,
         }),
-        Vec::new(),
+        vec![test_hashed_email(0)],
     );
 
-    let email1: HashedEmail = vec![1, 2, 3];
-    let email2: HashedEmail = vec![4, 5, 6];
+    let email1: HashedEmail = test_hashed_email(1);
+    let email2: HashedEmail = test_hashed_email(2);
     contract.set_recovery_emails(vec![email1.clone(), email2.clone()]);
 
     // Initially, no recent verified emails.
@@ -88,6 +95,14 @@ fn test_recovery_policy_one_of_two_recent() {
     // Simulate a successful verification of email1 "now".
     {
         let now_ms = 1_000_000;
+        let mut context_now = VMContextBuilder::new();
+        context_now
+            .current_account_id("alice.testnet".parse().unwrap())
+            .signer_account_id("alice.testnet".parse().unwrap())
+            .predecessor_account_id("alice.testnet".parse().unwrap())
+            .block_timestamp(now_ms * 1_000_000);
+        testing_env!(context_now.build());
+
         let pk =
             PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
         contract.debug_set_verified_email_for_testing(email1.clone(), pk, now_ms);
@@ -107,19 +122,19 @@ fn test_recovery_policy_two_of_three_with_expiry() {
         .block_timestamp(10 * 1_000_000);
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         Some(RecoveryPolicy {
             min_required_emails: 2,
             max_age_ms: 1_000,
         }),
-        Vec::new(),
+        vec![test_hashed_email(0), test_hashed_email(1)],
     );
 
-    let e1: HashedEmail = vec![1];
-    let e2: HashedEmail = vec![2];
-    let e3: HashedEmail = vec![3];
+    let e1: HashedEmail = test_hashed_email(1);
+    let e2: HashedEmail = test_hashed_email(2);
+    let e3: HashedEmail = test_hashed_email(3);
     contract.set_recovery_emails(vec![e1.clone(), e2.clone(), e3.clone()]);
 
     let pk =
@@ -162,18 +177,18 @@ fn test_recovery_policy_is_scoped_to_new_public_key() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier-v1.testnet".parse().unwrap(),
         "email-dkim-verifier-v1.testnet".parse().unwrap(),
         Some(RecoveryPolicy {
             min_required_emails: 2,
             max_age_ms: 30 * 60 * 1000,
         }),
-        Vec::new(),
+        vec![test_hashed_email(0), test_hashed_email(1)],
     );
 
-    let email1: HashedEmail = vec![1];
-    let email2: HashedEmail = vec![2];
+    let email1: HashedEmail = test_hashed_email(1);
+    let email2: HashedEmail = test_hashed_email(2);
     contract.set_recovery_emails(vec![email1.clone(), email2.clone()]);
 
     let pk1 =
@@ -207,19 +222,19 @@ fn test_recovery_policy_only_counts_recent_emails_for_specific_new_public_key() 
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier-v1.testnet".parse().unwrap(),
         "email-dkim-verifier-v1.testnet".parse().unwrap(),
         Some(RecoveryPolicy {
             min_required_emails: 2,
             max_age_ms: 1_000,
         }),
-        Vec::new(),
+        vec![test_hashed_email(0), test_hashed_email(1)],
     );
 
-    let email1: HashedEmail = vec![1];
-    let email2: HashedEmail = vec![2];
-    let email3: HashedEmail = vec![3];
+    let email1: HashedEmail = test_hashed_email(1);
+    let email2: HashedEmail = test_hashed_email(2);
+    let email3: HashedEmail = test_hashed_email(3);
     contract.set_recovery_emails(vec![email1.clone(), email2.clone(), email3.clone()]);
 
     let pk_target =
@@ -255,18 +270,18 @@ fn test_recovery_policy_does_not_mix_new_public_keys_then_satisfies_for_pk1() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier-v1.testnet".parse().unwrap(),
         "email-dkim-verifier-v1.testnet".parse().unwrap(),
         Some(RecoveryPolicy {
             min_required_emails: 2,
             max_age_ms: 30 * 60 * 1000,
         }),
-        Vec::new(),
+        vec![test_hashed_email(0), test_hashed_email(1)],
     );
 
-    let email1: HashedEmail = vec![1];
-    let email2: HashedEmail = vec![2];
+    let email1: HashedEmail = test_hashed_email(1);
+    let email2: HashedEmail = test_hashed_email(2);
     contract.set_recovery_emails(vec![email1.clone(), email2.clone()]);
 
     let pk1 =
@@ -293,11 +308,11 @@ fn test_set_and_get_zk_email_verifier() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         None,
-        Vec::new(),
+        vec![test_hashed_email(0)],
     );
 
     // Initial value from constructor
@@ -323,11 +338,11 @@ fn test_set_and_get_email_dkim_verifier() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         None,
-        Vec::new(),
+        vec![test_hashed_email(0)],
     );
 
     // Initial value from constructor
@@ -353,11 +368,17 @@ fn test_verify_zkemail_and_recover_does_not_panic() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let canonical = "alice@example.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         None,
-        Vec::new(),
+        vec![hashed_email],
     );
 
     // Just ensure that calling the method constructs a promise without panicking.
@@ -371,10 +392,10 @@ fn test_verify_zkemail_and_recover_does_not_panic() {
         pi_c: ["0".to_string(), "0".to_string(), "1".to_string()],
     };
     let public_inputs = vec!["dummy".to_string()];
+    let pk = PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
     let context = ZkEmailContext {
         account_id: "alice.testnet".to_string(),
-        new_public_key:
-            "ed25519:111111111111111111111111111111111111111111111111111111111111".to_string(),
+        new_public_key: String::from(&pk),
         from_email: "alice@example.com".to_string(),
         timestamp: "0".to_string(),
     };
@@ -387,11 +408,17 @@ fn test_verify_email_onchain_and_recover_does_not_panic() {
     let context = get_context("alice.testnet");
     testing_env!(context.build());
 
-    let mut contract = EmailRecoverer::new(
+    let canonical = "alice@example.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         None,
-        Vec::new(),
+        vec![hashed_email.clone()],
     );
 
     // Attach the minimum required deposit for DKIM verification.
@@ -407,7 +434,13 @@ fn test_verify_email_onchain_and_recover_does_not_panic() {
 
     let email_blob =
         "From: alice@example.com\nTo: recover@web3authn.org\n\nTest".to_string();
-    let _promise = contract.verify_email_onchain_and_recover(email_blob);
+    let pk = PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+    let expected_new_public_key = String::from(&pk);
+    let _promise = contract.verify_email_onchain_and_recover(
+        email_blob,
+        hashed_email,
+        expected_new_public_key,
+    );
 }
 
 #[test]
@@ -423,14 +456,14 @@ fn test_dkim_from_with_display_name_matches_configured_email() {
     testing_env!(context.build());
 
     // Initialize contract with a simple policy: 1 recent email required.
-    let mut contract = EmailRecoverer::new(
+    let mut contract = EmailRecoverer::init_email_recovery(
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         Some(RecoveryPolicy {
-            min_required_emails: 1,
+            min_required_emails: 2,
             max_age_ms: 30 * 60 * 1000,
         }),
-        Vec::new(),
+        vec![test_hashed_email(0), test_hashed_email(1)],
     );
 
     // Pre-compute the hashed email exactly as the contract does for a bare address.
@@ -441,7 +474,7 @@ fn test_dkim_from_with_display_name_matches_configured_email() {
     let hashed_email = env::sha256(&data);
 
     // Configure this hashed email as a recovery email.
-    contract.set_recovery_emails(vec![hashed_email.clone()]);
+    contract.set_recovery_emails(vec![hashed_email.clone(), test_hashed_email(9)]);
 
     // Simulate a DKIM verification result where the From: address includes a
     // display name, e.g. "Pta <n6378056@gmail.com>".
@@ -455,6 +488,13 @@ fn test_dkim_from_with_display_name_matches_configured_email() {
         email_timestamp_ms: Some(1_000),
     };
 
+    // Set a pending expectation so the callback can be accepted.
+    let _ = contract.verify_email_onchain_and_recover(
+        "dummy".to_string(),
+        hashed_email.clone(),
+        verification.new_public_key.clone(),
+    );
+
     // Call the DKIM plaintext callback directly; this should treat the
     // display-name form as matching the configured recovery email and mark it
     // as verified.
@@ -463,6 +503,333 @@ fn test_dkim_from_with_display_name_matches_configured_email() {
     let recent = contract.get_recent_verified_emails();
     assert_eq!(recent.len(), 1);
     assert_eq!(recent[0], hashed_email);
+}
+
+#[test]
+fn test_on_verify_email_onchain_result_is_noop_without_matching_pending_intent() {
+    let mut context = VMContextBuilder::new();
+    context
+        .current_account_id("alice.testnet".parse().unwrap())
+        .signer_account_id("alice.testnet".parse().unwrap())
+        .predecessor_account_id("alice.testnet".parse().unwrap())
+        .block_timestamp(1_000 * 1_000_000);
+    testing_env!(context.build());
+
+    let canonical = "alice@example.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    let mut contract = EmailRecoverer::init_email_recovery(
+        "zk-email-verifier.testnet".parse().unwrap(),
+        "email-dkim-verifier.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 2,
+            max_age_ms: 30 * 60 * 1000,
+        }),
+        vec![hashed_email.clone(), test_hashed_email(9)],
+    );
+
+    let pk = PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+    let verification = VerificationResult {
+        verified: true,
+        account_id: "alice.testnet".to_string(),
+        new_public_key: String::from(&pk),
+        from_address: "alice@example.com".to_string(),
+        email_timestamp_ms: Some(1_000),
+    };
+
+    // Call the callback without setting any pending expectation. This should be a no-op.
+    contract.on_verify_email_onchain_result("dummy".to_string(), Ok(verification));
+    assert_eq!(contract.get_recent_verified_emails().len(), 0);
+}
+
+#[test]
+fn test_on_verify_encrypted_email_result_is_noop_without_matching_pending_intent() {
+    let mut context = VMContextBuilder::new();
+    context
+        .current_account_id("alice.testnet".parse().unwrap())
+        .signer_account_id("alice.testnet".parse().unwrap())
+        .predecessor_account_id("alice.testnet".parse().unwrap())
+        .block_timestamp(1_000 * 1_000_000);
+    testing_env!(context.build());
+
+    let canonical = "alice@example.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    let mut contract = EmailRecoverer::init_email_recovery(
+        "zk-email-verifier.testnet".parse().unwrap(),
+        "email-dkim-verifier.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 2,
+            max_age_ms: 30 * 60 * 1000,
+        }),
+        vec![hashed_email.clone(), test_hashed_email(9)],
+    );
+
+    let pk = PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+    let verification = VerificationResult {
+        verified: true,
+        account_id: "alice.testnet".to_string(),
+        new_public_key: String::from(&pk),
+        from_address: "alice@example.com".to_string(),
+        email_timestamp_ms: Some(1_000),
+    };
+
+    // Call the callback without setting any pending expectation. This should be a no-op.
+    contract.on_verify_encrypted_email_result(Ok(verification));
+    assert_eq!(contract.get_recent_verified_emails().len(), 0);
+}
+
+#[test]
+fn test_on_verify_zkemail_result_is_noop_without_matching_pending_intent() {
+    let mut context = VMContextBuilder::new();
+    context
+        .current_account_id("alice.testnet".parse().unwrap())
+        .signer_account_id("alice.testnet".parse().unwrap())
+        .predecessor_account_id("alice.testnet".parse().unwrap())
+        .block_timestamp(1_000 * 1_000_000);
+    testing_env!(context.build());
+
+    let canonical = "alice@example.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    let mut contract = EmailRecoverer::init_email_recovery(
+        "zk-email-verifier.testnet".parse().unwrap(),
+        "email-dkim-verifier.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 2,
+            max_age_ms: 30 * 60 * 1000,
+        }),
+        vec![hashed_email.clone(), test_hashed_email(9)],
+    );
+
+    let pk = PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+    let verification = VerificationResult {
+        verified: true,
+        account_id: "alice.testnet".to_string(),
+        new_public_key: String::from(&pk),
+        from_address: "alice@example.com".to_string(),
+        email_timestamp_ms: Some(1_000),
+    };
+
+    // Call the callback without setting any pending expectation. This should be a no-op.
+    contract.on_verify_zkemail_result(Ok(verification));
+    assert_eq!(contract.get_recent_verified_emails().len(), 0);
+}
+
+#[test]
+fn test_on_verify_email_onchain_result_does_not_consume_pending_intent_on_mismatch() {
+    let mut context = VMContextBuilder::new();
+    context
+        .current_account_id("alice.testnet".parse().unwrap())
+        .signer_account_id("alice.testnet".parse().unwrap())
+        .predecessor_account_id("alice.testnet".parse().unwrap())
+        .block_timestamp(1_000 * 1_000_000);
+    testing_env!(context.build());
+
+    let canonical = "alice@example.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    let mut contract = EmailRecoverer::init_email_recovery(
+        "zk-email-verifier.testnet".parse().unwrap(),
+        "email-dkim-verifier.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 2,
+            max_age_ms: 30 * 60 * 1000,
+        }),
+        vec![hashed_email.clone(), test_hashed_email(9)],
+    );
+
+    let pk_expected =
+        PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key");
+    let pk_other =
+        PublicKey::from_parts(CurveType::ED25519, vec![1u8; 32]).expect("valid ed25519 key");
+
+    let verification_other_pk = VerificationResult {
+        verified: true,
+        account_id: "alice.testnet".to_string(),
+        new_public_key: String::from(&pk_other),
+        from_address: "alice@example.com".to_string(),
+        email_timestamp_ms: Some(1_000),
+    };
+
+    // Set pending expectation for pk_expected...
+    let _ = contract.verify_email_onchain_and_recover(
+        "dummy".to_string(),
+        hashed_email.clone(),
+        String::from(&pk_expected),
+    );
+
+    // ...but callback arrives with a different key, so it should be a no-op and
+    // should not consume the pending intent.
+    contract.on_verify_email_onchain_result("dummy".to_string(), Ok(verification_other_pk));
+    assert_eq!(contract.get_recent_verified_emails().len(), 0);
+
+    // Now deliver the callback with the expected key; it should be accepted.
+    let verification_expected_pk = VerificationResult {
+        verified: true,
+        account_id: "alice.testnet".to_string(),
+        new_public_key: String::from(&pk_expected),
+        from_address: "alice@example.com".to_string(),
+        email_timestamp_ms: Some(1_000),
+    };
+    contract.on_verify_email_onchain_result("dummy".to_string(), Ok(verification_expected_pk));
+    assert_eq!(contract.get_recent_verified_emails().len(), 1);
+}
+
+#[test]
+fn test_rejects_future_email_timestamps() {
+    let mut context = VMContextBuilder::new();
+    context
+        .current_account_id("alice.testnet".parse().unwrap())
+        .signer_account_id("alice.testnet".parse().unwrap())
+        .predecessor_account_id("alice.testnet".parse().unwrap())
+        .block_timestamp(1_000 * 1_000_000);
+    testing_env!(context.build());
+
+    let mut contract = EmailRecoverer::init_email_recovery(
+        "zk-email-verifier.testnet".parse().unwrap(),
+        "email-dkim-verifier.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 2,
+            max_age_ms: 30 * 60 * 1000,
+        }),
+        vec![test_hashed_email(0), test_hashed_email(1)],
+    );
+
+    let canonical = "alice@example.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    contract.set_recovery_emails(vec![hashed_email.clone(), test_hashed_email(9)]);
+
+    // Far-future timestamp should be rejected and not stored.
+    let verification = VerificationResult {
+        verified: true,
+        account_id: "alice.testnet".to_string(),
+        new_public_key: String::from(
+            &PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key"),
+        ),
+        from_address: "alice@example.com".to_string(),
+        email_timestamp_ms: Some(1_000 + 24 * 60 * 60 * 1000),
+    };
+
+    let _ = contract.verify_email_onchain_and_recover(
+        "dummy".to_string(),
+        hashed_email.clone(),
+        verification.new_public_key.clone(),
+    );
+
+    contract.on_verify_email_onchain_result("dummy".to_string(), Ok(verification));
+    assert_eq!(contract.get_recent_verified_emails().len(), 0);
+}
+
+#[test]
+fn test_rejects_stale_email_timestamps() {
+    let mut context = VMContextBuilder::new();
+    context
+        .current_account_id("alice.testnet".parse().unwrap())
+        .signer_account_id("alice.testnet".parse().unwrap())
+        .predecessor_account_id("alice.testnet".parse().unwrap())
+        .block_timestamp(10_000 * 1_000_000);
+    testing_env!(context.build());
+
+    let mut contract = EmailRecoverer::init_email_recovery(
+        "zk-email-verifier.testnet".parse().unwrap(),
+        "email-dkim-verifier.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 2,
+            max_age_ms: 1_000,
+        }),
+        vec![test_hashed_email(0), test_hashed_email(1)],
+    );
+
+    let canonical = "alice@example.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    contract.set_recovery_emails(vec![hashed_email.clone(), test_hashed_email(9)]);
+
+    // Too-old timestamp (outside max_age_ms) should be rejected and not stored.
+    let verification = VerificationResult {
+        verified: true,
+        account_id: "alice.testnet".to_string(),
+        new_public_key: String::from(
+            &PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key"),
+        ),
+        from_address: "alice@example.com".to_string(),
+        email_timestamp_ms: Some(10_000 - 1_001),
+    };
+
+    let _ = contract.verify_email_onchain_and_recover(
+        "dummy".to_string(),
+        hashed_email.clone(),
+        verification.new_public_key.clone(),
+    );
+
+    contract.on_verify_email_onchain_result("dummy".to_string(), Ok(verification));
+    assert_eq!(contract.get_recent_verified_emails().len(), 0);
+}
+
+#[test]
+fn test_clears_verified_emails_after_successful_recovery() {
+    let mut context = VMContextBuilder::new();
+    context
+        .current_account_id("alice.testnet".parse().unwrap())
+        .signer_account_id("alice.testnet".parse().unwrap())
+        .predecessor_account_id("alice.testnet".parse().unwrap())
+        .block_timestamp(1_000 * 1_000_000);
+    testing_env!(context.build());
+
+    let canonical = "alice@example.com".to_ascii_lowercase();
+    let mut data = canonical.into_bytes();
+    data.push(b'|');
+    data.extend("alice.testnet".as_bytes());
+    let hashed_email = env::sha256(&data);
+
+    let mut contract = EmailRecoverer::init_email_recovery(
+        "zk-email-verifier.testnet".parse().unwrap(),
+        "email-dkim-verifier.testnet".parse().unwrap(),
+        Some(RecoveryPolicy {
+            min_required_emails: 1,
+            max_age_ms: 30 * 60 * 1000,
+        }),
+        vec![hashed_email.clone()],
+    );
+
+    let verification = VerificationResult {
+        verified: true,
+        account_id: "alice.testnet".to_string(),
+        new_public_key: String::from(
+            &PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key"),
+        ),
+        from_address: "alice@example.com".to_string(),
+        email_timestamp_ms: Some(1_000),
+    };
+
+    let _ = contract.verify_email_onchain_and_recover(
+        "dummy".to_string(),
+        hashed_email.clone(),
+        verification.new_public_key.clone(),
+    );
+
+    contract.on_verify_email_onchain_result("dummy".to_string(), Ok(verification));
+    assert_eq!(contract.get_recent_verified_emails().len(), 0);
 }
 
 /// Helper to compile the contract and create a sandbox + deployment.
@@ -484,12 +851,12 @@ async fn setup_recoverer(
 
     // Initialize the recoverer with default policy and no recovery emails
     let outcome = contract
-        .call("new")
+        .call("init_email_recovery")
         .args_json(json!({
             "zk_email_verifier": zk_verifier.id(),
             "email_dkim_verifier": dkim_verifier.id(),
             "policy": null,
-            "recovery_emails": [],
+            "recovery_emails": vec![vec![0u8; HASHED_EMAIL_LEN]],
         }))
         .gas(Gas::from_tgas(30))
         .transact()
@@ -524,12 +891,12 @@ async fn test_user_can_set_and_get_recovery_emails_in_sandbox() -> Result<()> {
     let dkim_verifier = sandbox.dev_create_account().await?;
 
     let init_outcome = contract
-        .call("new")
+        .call("init_email_recovery")
         .args_json(json!({
             "zk_email_verifier": zk_verifier.id(),
             "email_dkim_verifier": dkim_verifier.id(),
             "policy": null,
-            "recovery_emails": [],
+            "recovery_emails": vec![vec![0u8; HASHED_EMAIL_LEN]],
         }))
         .gas(Gas::from_tgas(30))
         .transact()
@@ -537,7 +904,10 @@ async fn test_user_can_set_and_get_recovery_emails_in_sandbox() -> Result<()> {
 
     assert!(init_outcome.is_success(), "EmailRecoverer init should succeed");
 
-    let recovery_emails: Vec<Vec<u8>> = vec![vec![1, 2, 3], vec![4, 5, 6]];
+    let recovery_emails: Vec<Vec<u8>> = vec![
+        vec![1u8; HASHED_EMAIL_LEN],
+        vec![2u8; HASHED_EMAIL_LEN],
+    ];
 
     let set_outcome = contract
         .call("set_recovery_emails")
@@ -560,8 +930,8 @@ async fn test_user_can_set_and_get_recovery_emails_in_sandbox() -> Result<()> {
 
     let stored: Vec<Vec<u8>> = view_result.json()?;
     assert_eq!(stored.len(), 2);
-    assert_eq!(stored[0], vec![1, 2, 3]);
-    assert_eq!(stored[1], vec![4, 5, 6]);
+    assert_eq!(stored[0], vec![1u8; HASHED_EMAIL_LEN]);
+    assert_eq!(stored[1], vec![2u8; HASHED_EMAIL_LEN]);
 
     Ok(())
 }

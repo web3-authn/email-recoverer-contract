@@ -13,11 +13,11 @@ source "$CONTRACT_DIR/.env"
 cd "$REPO_ROOT/email-recoverer"
 
 cargo near deploy build-reproducible-wasm "$CONTRACT_ID" \
-  with-init-call new json-args '{
+  with-init-call init_email_recovery json-args '{
     "zk_email_verifier": "zk-email-verifier-v1.testnet",
     "email_dkim_verifier": "email-dkim-verifier-v1.testnet",
     "policy": null,
-    "recovery_emails": []
+    "recovery_emails": [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]]
   }' \
   prepaid-gas '80.0 Tgas' \
   attached-deposit '0 NEAR' \
@@ -26,4 +26,3 @@ cargo near deploy build-reproducible-wasm "$CONTRACT_ID" \
   --signer-public-key "$DEPLOYER_PUBLIC_KEY" \
   --signer-private-key "$DEPLOYER_PRIVATE_KEY" \
   send
-
