@@ -1,6 +1,6 @@
-use near_sdk::{env, log, Gas, Promise, PromiseError, PublicKey};
+use near_sdk::{env, Gas, Promise, PromiseError, PublicKey};
 
-use crate::{ext_self, EmailRecoverer, VerificationResult};
+use crate::{ext_self, EmailRecoverer, RecoveryAttemptStatus, VerificationResult};
 
 /// External interface for the global [zk-email] verifier contract.
 #[near_sdk::ext_contract(ext_zk_email_verifier)]
@@ -52,13 +52,8 @@ pub fn verify_zkemail_and_recover(
     proof: ProofInput,
     public_inputs: Vec<String>,
     context: ZkEmailContext,
+    request_id: String,
 ) -> Promise {
-    // Require proof target account to be this account.
-    let current = env::current_account_id().to_string();
-    if context.account_id != current {
-        env::panic_str("verify_zkemail_and_recover: account_id must match current account");
-    }
-
     ext_zk_email_verifier::ext(zk_email_verifier.clone())
         .with_static_gas(Gas::from_tgas(50))
         .verify_with_binding(
@@ -72,12 +67,13 @@ pub fn verify_zkemail_and_recover(
         .then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))
-                .on_verify_zkemail_result(),
+                .on_verify_zkemail_result(request_id),
         )
 }
 
 pub fn on_verify_zkemail_result(
     contract: &mut EmailRecoverer,
+    request_id: String,
     result: Result<VerificationResult, PromiseError>,
 ) {
     // Callback is scheduled by this contract in `verify_zkemail_and_recover`
@@ -90,23 +86,37 @@ pub fn on_verify_zkemail_result(
 
     let verification = match result {
         Ok(v) => v,
-        Err(_err) => {
-            log!("[zk-email] verification promise failed");
+        Err(err) => {
+            contract.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                format!("[zk-email] verification promise failed: {err:?}"),
+            );
             return;
         }
     };
 
+    contract.update_attempt_fields_from_verifier(&request_id, &verification);
+
     if !verification.verified {
-        log!("[zk-email] verification returned verified = false");
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::ZkEmailFailed,
+            "[zk-email] verification returned verified = false",
+        );
         return;
     }
 
     let current = env::current_account_id().to_string();
     if verification.account_id != current {
-        log!(
-            "[zk-email] verification account_id {} does not match current account {}",
-            verification.account_id,
-            env::current_account_id()
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::Failed,
+            format!(
+                "[zk-email] verification account_id {} does not match current account {}",
+                verification.account_id,
+                env::current_account_id()
+            ),
         );
         return;
     }
@@ -114,34 +124,62 @@ pub fn on_verify_zkemail_result(
     // Compute hashed email from the proved From: address and ensure it is configured.
     let hashed_email = contract.hash_from_email_for_current_account(&verification.from_address);
     if !contract.is_configured_recovery_email(&hashed_email) {
-        log!("[zk-email] From: email is not in configured recovery_emails");
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::PolicyFailed,
+            "[zk-email] From: email is not in configured recovery_emails",
+        );
         return;
     }
 
     let new_pk: PublicKey = match verification.new_public_key.parse() {
         Ok(pk) => pk,
         Err(_err) => {
-            log!("[zk-email] invalid new_public_key in verification result");
+            contract.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                "[zk-email] invalid new_public_key in verification result",
+            );
             return;
         }
     };
 
     if !contract.consume_pending_recovery_intent(&hashed_email, &new_pk) {
-        log!("[zk-email] verification result does not match any pending recovery intent");
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::Failed,
+            "[zk-email] verification result does not match any pending recovery intent",
+        );
         return;
     }
 
     let timestamp_ms = match verification.email_timestamp_ms {
         Some(ts) => ts,
         None => {
-            log!("[zk-email] verification succeeded but email_timestamp_ms is missing");
+            contract.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                "[zk-email] verification succeeded but email_timestamp_ms is missing",
+            );
             return;
         }
     };
 
-    contract.mark_verified_and_maybe_recover(
+    contract.update_attempt_status(&request_id, RecoveryAttemptStatus::Recovering, None);
+
+    let outcome = contract.mark_verified_and_maybe_recover(
         hashed_email,
         verification.new_public_key.clone(),
         timestamp_ms,
     );
+
+    match outcome {
+        Ok(true) => contract.update_attempt_status(&request_id, RecoveryAttemptStatus::Complete, None),
+        Ok(false) => contract.update_attempt_status(
+            &request_id,
+            RecoveryAttemptStatus::AwaitingMoreEmails,
+            None,
+        ),
+        Err(err) => contract.fail_attempt(&request_id, RecoveryAttemptStatus::Failed, err),
+    }
 }

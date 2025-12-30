@@ -5,7 +5,23 @@ Per-account contract that enables email-based recovery for a NEAR account (e.g. 
 - A ZK‑Email path via a global ZK verifier contract.
 - A TEE/DKIM path via a global EmailDKIMVerifier contract.
 
-The contract stores only **hashed recovery emails** and policy state; it never stores raw email addresses.
+The contract stores **hashed recovery emails** and policy state. For UX/polling, it also stores short-lived `request_id` attempt records (see below).
+
+---
+
+## 0. Request Status Polling (`request_id`)
+
+For UX, the contract supports a client-provided `request_id` that lets the frontend poll a single source (the user’s `EmailRecoverer`) for recovery status.
+
+- Each verification entrypoint accepts `request_id: String` and immediately stores a pollable `RecoveryAttempt`:
+  - `verify_encrypted_email_and_recover(..., request_id)`
+  - `verify_zkemail_and_recover(..., request_id)`
+  - `verify_email_onchain_and_recover(..., request_id)` (deprecated plaintext path)
+- The frontend polls:
+  - `get_recovery_attempt(request_id) -> Option<RecoveryAttempt>`
+- Attempts are automatically cleared after ~200 blocks via a yield-timeout callback; once cleared, `get_recovery_attempt` returns `None`.
+
+Note: `RecoveryAttempt` is short-lived polling state and may include verifier outputs like `from_address` and `new_public_key` for debugging/UI.
 
 ---
 
@@ -130,7 +146,7 @@ This gives you:
 The DKIM/Outlayer path is designed so that a relayer attaches at least **0.01 NEAR** per verification request, while Outlayer may consume only a fraction of that. Any unused portion is handled inside the DKIM verifier contract.
 
 - **Inputs**
-  - Relayer calls `user.near::verify_email_onchain_and_recover(email_blob, expected_hashed_email, expected_new_public_key)` and attaches at least `0.01 NEAR` (matching the DKIM verifier’s `MIN_DEPOSIT`).
+  - Relayer calls `user.near::verify_email_onchain_and_recover(email_blob, expected_hashed_email, expected_new_public_key, request_id)` and attaches at least `0.01 NEAR` (matching the DKIM verifier’s `MIN_DEPOSIT`).
 
 - **Flow**
   1. `EmailRecoverer::verify_email_onchain_and_recover`:

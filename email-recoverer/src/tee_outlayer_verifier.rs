@@ -1,6 +1,6 @@
-use near_sdk::{env, log, Gas, NearToken, Promise, PromiseError, AccountId, PublicKey};
+use crate::{ext_self, EmailRecoverer, RecoveryAttemptStatus, VerificationResult};
+use near_sdk::{env, AccountId, Gas, NearToken, Promise, PromiseError, PublicKey};
 use serde_json::Value as JsonValue;
-use crate::{ext_self, EmailRecoverer, VerificationResult};
 
 /// External interface for the global EmailDKIMVerifier contract (TEE path).
 #[near_sdk::ext_contract(ext_email_dkim_verifier)]
@@ -43,8 +43,8 @@ pub fn verify_encrypted_email_and_recover(
     email_dkim_verifier: &near_sdk::AccountId,
     encrypted_email_blob: JsonValue,
     aead_context: AeadContext,
+    request_id: String,
 ) -> Promise {
-
     let attached = env::attached_deposit().as_yoctonear();
     let caller = env::predecessor_account_id(); // relay account pays for Outlayer fees
 
@@ -52,20 +52,18 @@ pub fn verify_encrypted_email_and_recover(
         // Forward the full attached deposit to the DKIM verifier.
         .with_attached_deposit(NearToken::from_yoctonear(attached))
         .with_static_gas(Gas::from_tgas(50))
-        .request_email_verification_private(
-            caller.clone(),
-            encrypted_email_blob,
-            aead_context,
-        ).then(
+        .request_email_verification_private(caller.clone(), encrypted_email_blob, aead_context)
+        .then(
             ext_self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(50))
-                .on_verify_encrypted_email_result(),
+                .on_verify_encrypted_email_result(request_id),
         )
 }
 
 /// Callback after EmailDKIMVerifier finishes for encrypted emails.
 pub fn on_verify_encrypted_email_result(
     contract: &mut EmailRecoverer,
+    request_id: String,
     result: Result<VerificationResult, PromiseError>,
 ) {
     // Callback is scheduled by this contract in
@@ -79,23 +77,37 @@ pub fn on_verify_encrypted_email_result(
 
     let verification = match result {
         Ok(v) => v,
-        Err(_err) => {
-            log!("Encrypted email DKIM verification promise failed");
+        Err(err) => {
+            contract.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                format!("DKIM promise error: {err:?}"),
+            );
             return;
         }
     };
 
+    contract.update_attempt_fields_from_verifier(&request_id, &verification);
+
     if !verification.verified {
-        log!("Encrypted email DKIM verification returned verified = false");
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::DkimFailed,
+            "DKIM verification failed",
+        );
         return;
     }
 
     let current = env::current_account_id().to_string();
     if verification.account_id != current {
-        log!(
-            "Encrypted email DKIM verification account_id {} does not match current account {}",
-            verification.account_id,
-            env::current_account_id()
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::Failed,
+            format!(
+                "verification account_id {} does not match current account {}",
+                verification.account_id,
+                env::current_account_id()
+            ),
         );
         return;
     }
@@ -105,34 +117,64 @@ pub fn on_verify_encrypted_email_result(
     let hashed_email = contract.hash_from_email_for_current_account(&verification.from_address);
 
     if !contract.is_configured_recovery_email(&hashed_email) {
-        log!("From: email is not in configured recovery_emails");
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::PolicyFailed,
+            "From: email is not in configured recovery_emails",
+        );
         return;
     }
 
     let new_pk: PublicKey = match verification.new_public_key.parse() {
         Ok(pk) => pk,
         Err(_err) => {
-            log!("Encrypted email DKIM verification returned invalid new_public_key");
+            contract.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                "invalid new_public_key",
+            );
             return;
         }
     };
 
     if !contract.consume_pending_recovery_intent(&hashed_email, &new_pk) {
-        log!("Encrypted email DKIM verification result does not match any pending recovery intent");
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::Failed,
+            "verification result does not match any pending recovery intent",
+        );
         return;
     }
 
     let email_ts = match verification.email_timestamp_ms {
         Some(ts) => ts,
         None => {
-            log!("Encrypted email DKIM verification succeeded but email_timestamp_ms is missing");
+            contract.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                "email_timestamp_ms is missing",
+            );
             return;
         }
     };
 
-    contract.mark_verified_and_maybe_recover(
+    contract.update_attempt_status(&request_id, RecoveryAttemptStatus::Recovering, None);
+
+    let outcome = contract.mark_verified_and_maybe_recover(
         hashed_email,
         verification.new_public_key.clone(),
         email_ts,
     );
+
+    match outcome {
+        Ok(true) => {
+            contract.update_attempt_status(&request_id, RecoveryAttemptStatus::Complete, None)
+        }
+        Ok(false) => contract.update_attempt_status(
+            &request_id,
+            RecoveryAttemptStatus::AwaitingMoreEmails,
+            None,
+        ),
+        Err(err) => contract.fail_attempt(&request_id, RecoveryAttemptStatus::Failed, err),
+    }
 }

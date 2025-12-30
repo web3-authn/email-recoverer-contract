@@ -1,44 +1,26 @@
-use near_sdk::{
-    env, near, ext_contract,
-    PublicKey, AccountId, Promise, PromiseError
-};
-use std::collections::{BTreeMap, BTreeSet};
+use near_sdk::store::LookupMap;
+use near_sdk::{env, ext_contract, near, AccountId, Promise, PromiseError, PublicKey};
 use serde_json::Value as JsonValue;
+use std::collections::{BTreeMap, BTreeSet};
 
+mod onchain_public_verifier;
+mod recovery_policy;
+mod recovery_status;
+mod tee_outlayer_verifier;
 mod utils;
 mod zk_email_verifier;
-mod tee_outlayer_verifier;
-mod onchain_public_verifier;
 
-pub use crate::zk_email_verifier::{ProofInput, ZkEmailContext};
+pub use crate::recovery_policy::{RecoveryPolicy, MAX_RECOVERY_EMAILS};
+pub use crate::recovery_status::{RecoveryAttempt, RecoveryAttemptStatus};
 pub use crate::tee_outlayer_verifier::AeadContext;
+pub use crate::zk_email_verifier::{ProofInput, ZkEmailContext};
+use crate::recovery_policy::VerifiedRecoveryIntent;
 
 /// Alias for a hashed email (e.g. H(email || salt)).
 pub type HashedEmail = Vec<u8>;
 
 /// SHA-256 output size in bytes.
 pub const HASHED_EMAIL_LEN: usize = 32;
-
-/// Hard cap to keep worst-case state size and per-verification gas bounded.
-pub const MAX_RECOVERY_EMAILS: usize = 20;
-
-pub(crate) const ALLOWED_EMAIL_TIMESTAMP_SKEW_MS: u64 = 5 * 60 * 1000;
-
-#[near_sdk::near(serializers = [json, borsh])]
-#[derive(Clone)]
-pub struct RecoveryPolicy {
-    pub min_required_emails: u8,
-    pub max_age_ms: u64,
-}
-impl Default for RecoveryPolicy {
-    fn default() -> Self {
-        Self {
-            min_required_emails: 1,
-            // 30 minutes by default
-            max_age_ms: 30 * 60 * 1000,
-        }
-    }
-}
 
 /// Result returned by the ZK‑Email and EmailDKIMVerifier contracts.
 /// Mirrors the `VerificationResult` structs exposed by those verifier contracts.
@@ -52,27 +34,22 @@ pub struct VerificationResult {
     pub email_timestamp_ms: Option<u64>,
 }
 
-#[near_sdk::near(serializers = [json, borsh])]
-#[derive(Clone)]
-struct VerifiedRecoveryIntent {
-    timestamp: u64,
-    new_public_key: PublicKey,
-}
-
 /// Internal callbacks on this contract used for cross‑contract promises.
 #[ext_contract(ext_self)]
 pub trait EmailRecovererCallbacks {
     fn on_verify_zkemail_result(
         &mut self,
+        request_id: String,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     );
     fn on_verify_email_onchain_result(
         &mut self,
-        email_blob: String,
+        request_id: String,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     );
     fn on_verify_encrypted_email_result(
         &mut self,
+        request_id: String,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     );
 }
@@ -84,8 +61,10 @@ pub struct EmailRecoverer {
     recovery_emails: BTreeSet<HashedEmail>,
     /// Last successful verification intent per recovery email.
     verified_emails: BTreeMap<HashedEmail, VerifiedRecoveryIntent>,
-    /// Pending expected recovery intents per email (defense-in-depth).
+    /// Pending expected recovery intents per email.
     pending_recovery_intents: BTreeMap<HashedEmail, PublicKey>,
+    /// Pollable recovery attempt records keyed by frontend-provided request_id.
+    recovery_attempts_by_request_id: LookupMap<String, RecoveryAttempt>,
     /// Recovery policy.
     policy: RecoveryPolicy,
     /// Global ZK‑Email verifier contract account ID.
@@ -96,40 +75,14 @@ pub struct EmailRecoverer {
 
 impl Default for EmailRecoverer {
     fn default() -> Self {
-        env::panic_str("EmailRecoverer::default is not supported; please call `init_email_recovery`")
+        env::panic_str(
+            "EmailRecoverer::default is not supported; please call `init_email_recovery`",
+        )
     }
 }
 
 #[near]
 impl EmailRecoverer {
-    fn assert_valid_config(policy: &RecoveryPolicy, recovery_emails: &BTreeSet<HashedEmail>) {
-        assert!(
-            policy.min_required_emails > 0,
-            "min_required_emails must be >= 1"
-        );
-        assert!(policy.max_age_ms > 0, "max_age_ms must be > 0");
-        assert!(
-            !recovery_emails.is_empty(),
-            "recovery_emails must not be empty"
-        );
-        assert!(
-            recovery_emails.len() <= MAX_RECOVERY_EMAILS,
-            "recovery_emails too large; max is {}",
-            MAX_RECOVERY_EMAILS
-        );
-        for email in recovery_emails {
-            assert!(
-                email.len() == HASHED_EMAIL_LEN,
-                "HashedEmail must be {} bytes",
-                HASHED_EMAIL_LEN
-            );
-        }
-        assert!(
-            policy.min_required_emails as usize <= recovery_emails.len(),
-            "min_required_emails must be <= number of configured recovery emails"
-        );
-    }
-
     /// Initialize the per‑user recoverer for the current account.
     #[init(ignore_state)]
     pub fn init_email_recovery(
@@ -152,6 +105,7 @@ impl EmailRecoverer {
             recovery_emails,
             verified_emails: BTreeMap::new(),
             pending_recovery_intents: BTreeMap::new(),
+            recovery_attempts_by_request_id: LookupMap::new(b"r"),
             policy,
             zk_email_verifier,
             email_dkim_verifier,
@@ -166,6 +120,10 @@ impl EmailRecoverer {
         );
     }
 
+    pub fn get_recovery_emails(&self) -> Vec<HashedEmail> {
+        self.recovery_emails.iter().cloned().collect()
+    }
+
     pub fn set_recovery_emails(&mut self, recovery_emails: Vec<HashedEmail>) {
         self.assert_owner();
         let recovery_emails: BTreeSet<HashedEmail> = recovery_emails.into_iter().collect();
@@ -174,10 +132,6 @@ impl EmailRecoverer {
         // Reset timestamps when changing the set.
         self.verified_emails.clear();
         self.pending_recovery_intents.clear();
-    }
-
-    pub fn get_recovery_emails(&self) -> Vec<HashedEmail> {
-        self.recovery_emails.iter().cloned().collect()
     }
 
     pub fn get_zk_email_verifier(&self) -> AccountId {
@@ -198,101 +152,6 @@ impl EmailRecoverer {
         self.email_dkim_verifier = email_dkim_verifier;
     }
 
-    pub fn get_policy(&self) -> RecoveryPolicy {
-        self.policy.clone()
-    }
-
-    pub fn set_policy(&mut self, policy: RecoveryPolicy) {
-        self.assert_owner();
-        Self::assert_valid_config(&policy, &self.recovery_emails);
-        self.policy = policy;
-    }
-
-    /// Reset an in-progress recovery attempt without changing recovery emails.
-    pub fn clear_verified_emails(&mut self) {
-        self.assert_owner();
-        self.verified_emails.clear();
-        self.pending_recovery_intents.clear();
-    }
-
-    pub(crate) fn set_pending_recovery_intent(
-        &mut self,
-        hashed_email: &HashedEmail,
-        new_public_key: &PublicKey,
-    ) {
-        assert!(
-            hashed_email.len() == HASHED_EMAIL_LEN,
-            "HashedEmail must be {} bytes",
-            HASHED_EMAIL_LEN
-        );
-        assert!(
-            self.is_configured_recovery_email(hashed_email),
-            "HashedEmail is not in configured recovery_emails"
-        );
-        self.pending_recovery_intents
-            .insert(hashed_email.clone(), new_public_key.clone());
-    }
-
-    pub(crate) fn consume_pending_recovery_intent(
-        &mut self,
-        hashed_email: &HashedEmail,
-        new_public_key: &PublicKey,
-    ) -> bool {
-        match self.pending_recovery_intents.get(hashed_email) {
-            Some(expected_pk) if expected_pk == new_public_key => {
-                self.pending_recovery_intents.remove(hashed_email);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Return the set of recovery emails that currently satisfy the
-    /// recency window (`max_age_ms`) in the configured policy.
-    pub fn get_recent_verified_emails(&self) -> Vec<HashedEmail> {
-        let now_ms = env::block_timestamp_ms();
-        let mut recent = Vec::new();
-        for email in &self.recovery_emails {
-            if let Some(intent) = self.verified_emails.get(email) {
-                if intent.timestamp > now_ms.saturating_add(ALLOWED_EMAIL_TIMESTAMP_SKEW_MS) {
-                    continue;
-                }
-                if now_ms.saturating_sub(intent.timestamp) <= self.policy.max_age_ms {
-                    recent.push(email.clone());
-                }
-            }
-        }
-        recent
-    }
-
-    /// Verify proof with ZkEmailVerifier and recover if policy is satisfied.
-    pub fn verify_zkemail_and_recover(
-        &mut self,
-        proof: ProofInput,
-        public_inputs: Vec<String>,
-        context: ZkEmailContext,
-    ) -> Promise {
-        let expected_hashed_email = self.hash_from_email_for_current_account(&context.from_email);
-        let expected_pk: PublicKey = context
-            .new_public_key
-            .parse()
-            .unwrap_or_else(|_| env::panic_str("verify_zkemail_and_recover: invalid new_public_key"));
-        self.set_pending_recovery_intent(&expected_hashed_email, &expected_pk);
-        zk_email_verifier::verify_zkemail_and_recover(
-            &self.zk_email_verifier,
-            proof,
-            public_inputs,
-            context,
-        )
-    }
-    /// Callback after verify_zkemail_and_recover finishes.
-    pub fn on_verify_zkemail_result(
-        &mut self,
-        #[callback_result] result: Result<VerificationResult, PromiseError>,
-    ) {
-        zk_email_verifier::on_verify_zkemail_result(self, result)
-    }
-
     /// TEE/encrypted path: ask the EmailDKIMVerifier to verify DKIM for the
     /// given encrypted email blob and recover the account
     ///
@@ -310,23 +169,150 @@ impl EmailRecoverer {
         aead_context: AeadContext,
         expected_hashed_email: HashedEmail,
         expected_new_public_key: String,
+        request_id: String,
     ) -> Promise {
-        let expected_pk: PublicKey = expected_new_public_key.parse().unwrap_or_else(|_| {
-            env::panic_str("verify_encrypted_email_and_recover: invalid expected_new_public_key")
+        let request_id = request_id.trim().to_string();
+        assert!(!request_id.is_empty(), "request_id is required");
+
+        let now_ms = env::block_timestamp_ms();
+        self.upsert_attempt(RecoveryAttempt {
+            request_id: request_id.clone(),
+            status: RecoveryAttemptStatus::Started,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+            error: None,
+            from_address: None,
+            email_timestamp_ms: None,
+            new_public_key: Some(expected_new_public_key.clone()),
         });
+
+        if expected_hashed_email.len() != HASHED_EMAIL_LEN {
+            self.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                format!(
+                    "invalid expected_hashed_email length; expected {} bytes",
+                    HASHED_EMAIL_LEN
+                ),
+            );
+            return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
+        }
+
+        let expected_pk: PublicKey = match expected_new_public_key.parse() {
+            Ok(pk) => pk,
+            Err(_err) => {
+                self.fail_attempt(
+                    &request_id,
+                    RecoveryAttemptStatus::Failed,
+                    "invalid expected_new_public_key",
+                );
+                return Promise::new(env::predecessor_account_id())
+                    .transfer(env::attached_deposit());
+            }
+        };
+
+        if !self.is_configured_recovery_email(&expected_hashed_email) {
+            self.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::PolicyFailed,
+                "HashedEmail is not in configured recovery_emails",
+            );
+            return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
+        }
+
         self.set_pending_recovery_intent(&expected_hashed_email, &expected_pk);
+        self.update_attempt_status(&request_id, RecoveryAttemptStatus::VerifyingDkim, None);
+
         tee_outlayer_verifier::verify_encrypted_email_and_recover(
             &self.email_dkim_verifier,
             encrypted_email_blob,
-            aead_context
+            aead_context,
+            request_id,
         )
     }
     /// Callback after EmailDKIMVerifier finishes for encrypted emails.
     pub fn on_verify_encrypted_email_result(
         &mut self,
+        request_id: String,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     ) {
-        tee_outlayer_verifier::on_verify_encrypted_email_result(self, result)
+        tee_outlayer_verifier::on_verify_encrypted_email_result(self, request_id, result)
+    }
+
+    /// Verify proof with ZkEmailVerifier and recover if policy is satisfied.
+    pub fn verify_zkemail_and_recover(
+        &mut self,
+        proof: ProofInput,
+        public_inputs: Vec<String>,
+        context: ZkEmailContext,
+        request_id: String,
+    ) -> Promise {
+        let request_id = request_id.trim().to_string();
+        assert!(!request_id.is_empty(), "request_id is required");
+
+        let now_ms = env::block_timestamp_ms();
+        self.upsert_attempt(RecoveryAttempt {
+            request_id: request_id.clone(),
+            status: RecoveryAttemptStatus::Started,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+            error: None,
+            from_address: None,
+            email_timestamp_ms: None,
+            new_public_key: Some(context.new_public_key.clone()),
+        });
+
+        let current = env::current_account_id().to_string();
+        if context.account_id != current {
+            self.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                "verify_zkemail_and_recover: account_id must match current account",
+            );
+            return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
+        }
+
+        let expected_hashed_email = self.hash_from_email_for_current_account(&context.from_email);
+        let expected_pk: PublicKey = match context.new_public_key.parse() {
+            Ok(pk) => pk,
+            Err(_err) => {
+                self.fail_attempt(
+                    &request_id,
+                    RecoveryAttemptStatus::Failed,
+                    "verify_zkemail_and_recover: invalid new_public_key",
+                );
+                return Promise::new(env::predecessor_account_id())
+                    .transfer(env::attached_deposit());
+            }
+        };
+
+        if !self.is_configured_recovery_email(&expected_hashed_email) {
+            self.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::PolicyFailed,
+                "HashedEmail is not in configured recovery_emails",
+            );
+            return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
+        }
+
+        self.set_pending_recovery_intent(&expected_hashed_email, &expected_pk);
+        self.update_attempt_status(&request_id, RecoveryAttemptStatus::VerifyingZkEmail, None);
+        zk_email_verifier::verify_zkemail_and_recover(
+            &self.zk_email_verifier,
+            proof,
+            public_inputs,
+            context,
+            request_id,
+        )
+    }
+
+    /// Callback after verify_zkemail_and_recover finishes.
+    pub fn on_verify_zkemail_result(
+        &mut self,
+        request_id: String,
+        #[callback_result] result: Result<VerificationResult, PromiseError>,
+    ) {
+        zk_email_verifier::on_verify_zkemail_result(self, request_id, result)
     }
 
     /// TEE/on-chain plaintext path: ask the EmailDKIMVerifier to verify DKIM
@@ -339,20 +325,73 @@ impl EmailRecoverer {
         email_blob: String,
         expected_hashed_email: HashedEmail,
         expected_new_public_key: String,
+        request_id: String,
     ) -> Promise {
-        let expected_pk: PublicKey = expected_new_public_key.parse().unwrap_or_else(|_| {
-            env::panic_str("verify_email_onchain_and_recover: invalid expected_new_public_key")
+        let request_id = request_id.trim().to_string();
+        assert!(!request_id.is_empty(), "request_id is required");
+
+        let now_ms = env::block_timestamp_ms();
+        self.upsert_attempt(RecoveryAttempt {
+            request_id: request_id.clone(),
+            status: RecoveryAttemptStatus::Started,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+            error: None,
+            from_address: None,
+            email_timestamp_ms: None,
+            new_public_key: Some(expected_new_public_key.clone()),
         });
+
+        if expected_hashed_email.len() != HASHED_EMAIL_LEN {
+            self.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                format!(
+                    "invalid expected_hashed_email length; expected {} bytes",
+                    HASHED_EMAIL_LEN
+                ),
+            );
+            return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
+        }
+
+        let expected_pk: PublicKey = match expected_new_public_key.parse() {
+            Ok(pk) => pk,
+            Err(_err) => {
+                self.fail_attempt(
+                    &request_id,
+                    RecoveryAttemptStatus::Failed,
+                    "verify_email_onchain_and_recover: invalid expected_new_public_key",
+                );
+                return Promise::new(env::predecessor_account_id())
+                    .transfer(env::attached_deposit());
+            }
+        };
+
+        if !self.is_configured_recovery_email(&expected_hashed_email) {
+            self.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::PolicyFailed,
+                "HashedEmail is not in configured recovery_emails",
+            );
+            return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
+        }
+
         self.set_pending_recovery_intent(&expected_hashed_email, &expected_pk);
-        onchain_public_verifier::verify_email_onchain_and_recover(&self.email_dkim_verifier, email_blob)
+        self.update_attempt_status(&request_id, RecoveryAttemptStatus::VerifyingDkim, None);
+
+        onchain_public_verifier::verify_email_onchain_and_recover(
+            &self.email_dkim_verifier,
+            email_blob,
+            request_id,
+        )
     }
     /// Callback after EmailDKIMVerifier finishes for plaintext/on-chain emails.
     /// @deprecated Prefer `on_verify_encrypted_email_result` used by the encrypted TEE path.
     pub fn on_verify_email_onchain_result(
         &mut self,
-        email_blob: String,
+        request_id: String,
         #[callback_result] result: Result<VerificationResult, PromiseError>,
     ) {
-        onchain_public_verifier::on_verify_email_onchain_result(self, email_blob, result)
+        onchain_public_verifier::on_verify_email_onchain_result(self, request_id, result)
     }
 }
