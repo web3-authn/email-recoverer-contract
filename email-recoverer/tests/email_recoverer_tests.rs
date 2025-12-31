@@ -591,7 +591,7 @@ fn test_verify_encrypted_email_and_recover_policy_failure_is_recorded() {
             .error
             .as_deref()
             .unwrap_or_default()
-            .contains("configured recovery_emails"),
+            .contains("recovery email"),
         "unexpected error message: {:?}",
         attempt.error
     );

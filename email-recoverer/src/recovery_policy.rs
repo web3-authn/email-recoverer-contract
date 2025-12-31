@@ -76,28 +76,28 @@ impl EmailRecoverer {
     pub(crate) fn assert_valid_config(policy: &RecoveryPolicy, recovery_emails: &BTreeSet<HashedEmail>) {
         assert!(
             policy.min_required_emails > 0,
-            "min_required_emails must be >= 1"
+            "Min required emails must be >= 1"
         );
-        assert!(policy.max_age_ms > 0, "max_age_ms must be > 0");
+        assert!(policy.max_age_ms > 0, "Max age must be > 0");
         assert!(
             !recovery_emails.is_empty(),
-            "recovery_emails must not be empty"
+            "Recovery emails must not be empty"
         );
         assert!(
             recovery_emails.len() <= MAX_RECOVERY_EMAILS,
-            "recovery_emails too large; max is {}",
+            "Too many recovery emails; max is {}",
             MAX_RECOVERY_EMAILS
         );
         for email in recovery_emails {
             assert!(
                 email.len() == HASHED_EMAIL_LEN,
-                "HashedEmail must be {} bytes",
+                "Recovery email hash must be {} bytes",
                 HASHED_EMAIL_LEN
             );
         }
         assert!(
             policy.min_required_emails as usize <= recovery_emails.len(),
-            "min_required_emails must be <= number of configured recovery emails"
+            "Min required emails must be <= number of configured recovery emails"
         );
     }
 
@@ -108,12 +108,12 @@ impl EmailRecoverer {
     ) {
         assert!(
             hashed_email.len() == HASHED_EMAIL_LEN,
-            "HashedEmail must be {} bytes",
+            "Recovery email hash must be {} bytes",
             HASHED_EMAIL_LEN
         );
         assert!(
             self.is_configured_recovery_email(hashed_email),
-            "HashedEmail is not in configured recovery_emails"
+            "Recovery email is not configured for this account"
         );
         self.pending_recovery_intents
             .insert(hashed_email.clone(), new_public_key.clone());
@@ -173,21 +173,24 @@ impl EmailRecoverer {
         // - not too old (outside policy max_age_ms)
         if timestamp_ms > now_ms.saturating_add(ALLOWED_EMAIL_TIMESTAMP_SKEW_MS) {
             return Err(format!(
-                "rejecting future email timestamp {} (now {})",
-                timestamp_ms, now_ms
+                "Email timestamp is in the future (email: {}, now: {}).",
+                timestamp_ms,
+                now_ms
             ));
         }
 
         if now_ms.saturating_sub(timestamp_ms) > self.policy.max_age_ms {
             return Err(format!(
-                "rejecting stale email timestamp {} (now {}, max_age_ms {})",
-                timestamp_ms, now_ms, self.policy.max_age_ms
+                "Email is too old for recovery (email: {}, now: {}, max age: {} ms).",
+                timestamp_ms,
+                now_ms,
+                self.policy.max_age_ms
             ));
         }
 
         let new_public_key: PublicKey = new_public_key
             .parse()
-            .map_err(|_err| "failed to parse new_public_key".to_string())?;
+            .map_err(|_err| "Invalid new public key.".to_string())?;
 
         self.verified_emails.insert(
             hashed_email,

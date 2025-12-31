@@ -90,7 +90,9 @@ pub fn on_verify_zkemail_result(
             contract.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::Failed,
-                format!("[zk-email] verification promise failed: {err:?}"),
+                format!(
+                    "Email verification failed due to an internal error. Details: {err:?}"
+                ),
             );
             return;
         }
@@ -102,7 +104,7 @@ pub fn on_verify_zkemail_result(
         contract.fail_attempt(
             &request_id,
             RecoveryAttemptStatus::ZkEmailFailed,
-            "[zk-email] verification returned verified = false",
+            "Email verification failed.",
         );
         return;
     }
@@ -113,9 +115,9 @@ pub fn on_verify_zkemail_result(
             &request_id,
             RecoveryAttemptStatus::Failed,
             format!(
-                "[zk-email] verification account_id {} does not match current account {}",
-                verification.account_id,
-                env::current_account_id()
+                "Verification result is for a different account (expected {}, got {}).",
+                env::current_account_id(),
+                verification.account_id
             ),
         );
         return;
@@ -127,7 +129,7 @@ pub fn on_verify_zkemail_result(
         contract.fail_attempt(
             &request_id,
             RecoveryAttemptStatus::PolicyFailed,
-            "[zk-email] From: email is not in configured recovery_emails",
+            "Sender email is not one of your configured recovery emails.",
         );
         return;
     }
@@ -138,7 +140,7 @@ pub fn on_verify_zkemail_result(
             contract.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::Failed,
-                "[zk-email] invalid new_public_key in verification result",
+                "Invalid new public key in verification result.",
             );
             return;
         }
@@ -148,7 +150,7 @@ pub fn on_verify_zkemail_result(
         contract.fail_attempt(
             &request_id,
             RecoveryAttemptStatus::Failed,
-            "[zk-email] verification result does not match any pending recovery intent",
+            "Verification result does not match this recovery request.",
         );
         return;
     }
@@ -159,7 +161,7 @@ pub fn on_verify_zkemail_result(
             contract.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::Failed,
-                "[zk-email] verification succeeded but email_timestamp_ms is missing",
+                "Email timestamp is missing from the verification result.",
             );
             return;
         }

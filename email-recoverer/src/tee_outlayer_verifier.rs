@@ -81,7 +81,9 @@ pub fn on_verify_encrypted_email_result(
             contract.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::Failed,
-                format!("DKIM promise error: {err:?}"),
+                format!(
+                    "Email verification failed due to an internal error. Details: {err:?}"
+                ),
             );
             return;
         }
@@ -93,7 +95,7 @@ pub fn on_verify_encrypted_email_result(
         contract.fail_attempt(
             &request_id,
             RecoveryAttemptStatus::DkimFailed,
-            "DKIM verification failed",
+            "Email verification failed.",
         );
         return;
     }
@@ -104,9 +106,9 @@ pub fn on_verify_encrypted_email_result(
             &request_id,
             RecoveryAttemptStatus::Failed,
             format!(
-                "verification account_id {} does not match current account {}",
-                verification.account_id,
-                env::current_account_id()
+                "Verification result is for a different account (expected {}, got {}).",
+                env::current_account_id(),
+                verification.account_id
             ),
         );
         return;
@@ -120,7 +122,7 @@ pub fn on_verify_encrypted_email_result(
         contract.fail_attempt(
             &request_id,
             RecoveryAttemptStatus::PolicyFailed,
-            "From: email is not in configured recovery_emails",
+            "Sender email is not one of your configured recovery emails.",
         );
         return;
     }
@@ -131,7 +133,7 @@ pub fn on_verify_encrypted_email_result(
             contract.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::Failed,
-                "invalid new_public_key",
+                "Invalid new public key.",
             );
             return;
         }
@@ -141,7 +143,7 @@ pub fn on_verify_encrypted_email_result(
         contract.fail_attempt(
             &request_id,
             RecoveryAttemptStatus::Failed,
-            "verification result does not match any pending recovery intent",
+            "Verification result does not match this recovery request.",
         );
         return;
     }
@@ -152,7 +154,7 @@ pub fn on_verify_encrypted_email_result(
             contract.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::Failed,
-                "email_timestamp_ms is missing",
+                "Email timestamp is missing from the verification result.",
             );
             return;
         }

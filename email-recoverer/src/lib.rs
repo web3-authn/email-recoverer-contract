@@ -172,7 +172,7 @@ impl EmailRecoverer {
         request_id: String,
     ) -> Promise {
         let request_id = request_id.trim().to_string();
-        assert!(!request_id.is_empty(), "request_id is required");
+        assert!(!request_id.is_empty(), "request ID is required");
 
         let now_ms = env::block_timestamp_ms();
         self.upsert_attempt(RecoveryAttempt {
@@ -191,7 +191,7 @@ impl EmailRecoverer {
                 &request_id,
                 RecoveryAttemptStatus::Failed,
                 format!(
-                    "invalid expected_hashed_email length; expected {} bytes",
+                    "Invalid recovery email hash (expected {} bytes).",
                     HASHED_EMAIL_LEN
                 ),
             );
@@ -204,7 +204,7 @@ impl EmailRecoverer {
                 self.fail_attempt(
                     &request_id,
                     RecoveryAttemptStatus::Failed,
-                    "invalid expected_new_public_key",
+                    "Invalid new public key.",
                 );
                 return Promise::new(env::predecessor_account_id())
                     .transfer(env::attached_deposit());
@@ -215,7 +215,7 @@ impl EmailRecoverer {
             self.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::PolicyFailed,
-                "HashedEmail is not in configured recovery_emails",
+                "This recovery email is not configured for this account.",
             );
             return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
         }
@@ -248,7 +248,7 @@ impl EmailRecoverer {
         request_id: String,
     ) -> Promise {
         let request_id = request_id.trim().to_string();
-        assert!(!request_id.is_empty(), "request_id is required");
+        assert!(!request_id.is_empty(), "request ID is required");
 
         let now_ms = env::block_timestamp_ms();
         self.upsert_attempt(RecoveryAttempt {
@@ -267,7 +267,7 @@ impl EmailRecoverer {
             self.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::Failed,
-                "verify_zkemail_and_recover: account_id must match current account",
+                "This recovery proof is for a different account.",
             );
             return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
         }
@@ -279,7 +279,7 @@ impl EmailRecoverer {
                 self.fail_attempt(
                     &request_id,
                     RecoveryAttemptStatus::Failed,
-                    "verify_zkemail_and_recover: invalid new_public_key",
+                    "Invalid new public key.",
                 );
                 return Promise::new(env::predecessor_account_id())
                     .transfer(env::attached_deposit());
@@ -290,7 +290,7 @@ impl EmailRecoverer {
             self.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::PolicyFailed,
-                "HashedEmail is not in configured recovery_emails",
+                "This recovery email is not configured for this account.",
             );
             return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
         }
@@ -328,7 +328,7 @@ impl EmailRecoverer {
         request_id: String,
     ) -> Promise {
         let request_id = request_id.trim().to_string();
-        assert!(!request_id.is_empty(), "request_id is required");
+        assert!(!request_id.is_empty(), "request ID is required");
 
         let now_ms = env::block_timestamp_ms();
         self.upsert_attempt(RecoveryAttempt {
@@ -347,7 +347,7 @@ impl EmailRecoverer {
                 &request_id,
                 RecoveryAttemptStatus::Failed,
                 format!(
-                    "invalid expected_hashed_email length; expected {} bytes",
+                    "Invalid recovery email hash (expected {} bytes).",
                     HASHED_EMAIL_LEN
                 ),
             );
@@ -360,7 +360,7 @@ impl EmailRecoverer {
                 self.fail_attempt(
                     &request_id,
                     RecoveryAttemptStatus::Failed,
-                    "verify_email_onchain_and_recover: invalid expected_new_public_key",
+                    "Invalid new public key.",
                 );
                 return Promise::new(env::predecessor_account_id())
                     .transfer(env::attached_deposit());
@@ -371,7 +371,7 @@ impl EmailRecoverer {
             self.fail_attempt(
                 &request_id,
                 RecoveryAttemptStatus::PolicyFailed,
-                "HashedEmail is not in configured recovery_emails",
+                "This recovery email is not configured for this account.",
             );
             return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
         }
