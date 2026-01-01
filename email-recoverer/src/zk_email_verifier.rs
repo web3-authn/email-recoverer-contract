@@ -1,12 +1,15 @@
 use near_sdk::{env, Gas, Promise, PromiseError, PublicKey};
 
-use crate::{ext_self, EmailRecoverer, RecoveryAttemptStatus, VerificationResult};
+use crate::{
+    ext_self, EmailRecoverer, HashedEmail, RecoveryAttemptStatus, VerificationResult,
+    HASHED_EMAIL_LEN,
+};
 
 /// External interface for the global [zk-email] verifier contract.
 #[near_sdk::ext_contract(ext_zk_email_verifier)]
 pub trait ZkEmailVerifier {
     /// Verify a zk-SNARK proof and ensure that the provided
-    /// `account_id`, `new_public_key`, `from_email`, and `timestamp`
+    /// `account_id`, `new_public_key`, `from_address_hash`, and `timestamp`
     /// are correctly bound into the public inputs.
     fn verify_with_binding(
         &self,
@@ -14,7 +17,7 @@ pub trait ZkEmailVerifier {
         public_inputs: Vec<String>,
         account_id: String,
         new_public_key: String,
-        from_email: String,
+        from_address_hash: HashedEmail,
         timestamp: String,
     ) -> VerificationResult;
 }
@@ -39,7 +42,7 @@ pub struct ProofInput {
 pub struct ZkEmailContext {
     pub account_id: String,
     pub new_public_key: String,
-    pub from_email: String,
+    pub from_address_hash: HashedEmail,
     pub timestamp: String,
 }
 
@@ -61,7 +64,7 @@ pub fn verify_zkemail_and_recover(
             public_inputs,
             context.account_id,
             context.new_public_key,
-            context.from_email,
+            context.from_address_hash,
             context.timestamp,
         )
         .then(
@@ -123,8 +126,19 @@ pub fn on_verify_zkemail_result(
         return;
     }
 
-    // Compute hashed email from the proved From: address and ensure it is configured.
-    let hashed_email = contract.hash_from_email_for_current_account(&verification.from_address);
+    // Ensure the ZK verifier provided a valid hashed From: address and that it is configured.
+    let hashed_email = verification.from_address_hash.clone();
+    if hashed_email.len() != HASHED_EMAIL_LEN {
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::Failed,
+            format!(
+                "Invalid recovery email hash in verification result (expected {} bytes).",
+                HASHED_EMAIL_LEN
+            ),
+        );
+        return;
+    }
     if !contract.is_configured_recovery_email(&hashed_email) {
         contract.fail_attempt(
             &request_id,

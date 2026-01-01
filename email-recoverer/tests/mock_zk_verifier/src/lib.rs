@@ -13,8 +13,12 @@ pub struct VerificationResult {
     pub verified: bool,
     pub account_id: String,
     pub new_public_key: String,
-    pub from_address: String,
+    pub from_address_hash: Vec<u8>,
     pub email_timestamp_ms: Option<u64>,
+    pub request_id: String,
+    #[borsh(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[near(contract_state)]
@@ -35,14 +39,14 @@ impl MockZkVerifier {
         public_inputs: Vec<String>,
         account_id: String,
         new_public_key: String,
-        from_email: String,
+        from_address_hash: Vec<u8>,
         timestamp: String,
     ) -> VerificationResult {
         env::log_str(&format!(
-            "MockZkVerifier::verify_with_binding called (num_inputs={}, account_id={}, from_email={})",
+            "MockZkVerifier::verify_with_binding called (num_inputs={}, account_id={}, from_address_hash_len={})",
             public_inputs.len(),
             account_id,
-            from_email
+            from_address_hash.len()
         ));
 
         let email_timestamp_ms = timestamp.parse::<u64>().ok();
@@ -51,8 +55,10 @@ impl MockZkVerifier {
             verified: true,
             account_id,
             new_public_key,
-            from_address: from_email,
+            from_address_hash,
             email_timestamp_ms,
+            request_id: "mock-request-id".to_string(),
+            error: None,
         }
     }
 }

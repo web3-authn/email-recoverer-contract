@@ -30,8 +30,19 @@ pub struct VerificationResult {
     pub verified: bool,
     pub account_id: String,
     pub new_public_key: String,
-    pub from_address: String,
+    /// SHA-256 hash of the canonical sender email, salted by account id:
+    /// `sha256("<canonical_from>|<account_id_lower>")`.
+    /// Returned as raw bytes so the caller contract can compare directly against
+    /// `get_recovery_emails()` output (which is `Vec<Vec<u8>>`).
+    pub from_address_hash: HashedEmail,
     pub email_timestamp_ms: Option<u64>,
+    pub request_id: String,
+    /// Optional diagnostic string for failures (e.g. worker error, DNS error).
+    /// Note: this is not persisted in contract state (Borsh) so that adding it
+    /// stays backwards-compatible with previously stored `VerificationResult`s.
+    #[borsh(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Internal callbacks on this contract used for cross‑contract promises.
@@ -181,7 +192,7 @@ impl EmailRecoverer {
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
             error: None,
-            from_address: None,
+            from_address_hash: None,
             email_timestamp_ms: None,
             new_public_key: Some(expected_new_public_key.clone()),
         });
@@ -257,7 +268,7 @@ impl EmailRecoverer {
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
             error: None,
-            from_address: None,
+            from_address_hash: None,
             email_timestamp_ms: None,
             new_public_key: Some(context.new_public_key.clone()),
         });
@@ -272,7 +283,18 @@ impl EmailRecoverer {
             return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
         }
 
-        let expected_hashed_email = self.hash_from_email_for_current_account(&context.from_email);
+        let expected_hashed_email = context.from_address_hash.clone();
+        if expected_hashed_email.len() != HASHED_EMAIL_LEN {
+            self.fail_attempt(
+                &request_id,
+                RecoveryAttemptStatus::Failed,
+                format!(
+                    "Invalid recovery email hash (expected {} bytes).",
+                    HASHED_EMAIL_LEN
+                ),
+            );
+            return Promise::new(env::predecessor_account_id()).transfer(env::attached_deposit());
+        }
         let expected_pk: PublicKey = match context.new_public_key.parse() {
             Ok(pk) => pk,
             Err(_err) => {
@@ -337,7 +359,7 @@ impl EmailRecoverer {
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
             error: None,
-            from_address: None,
+            from_address_hash: None,
             email_timestamp_ms: None,
             new_public_key: Some(expected_new_public_key.clone()),
         });

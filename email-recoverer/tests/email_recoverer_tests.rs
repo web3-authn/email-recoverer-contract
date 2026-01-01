@@ -364,7 +364,7 @@ fn test_verify_zkemail_and_recover_does_not_panic() {
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         None,
-        vec![hashed_email],
+        vec![hashed_email.clone()],
     );
 
     // Just ensure that calling the method constructs a promise without panicking.
@@ -382,7 +382,7 @@ fn test_verify_zkemail_and_recover_does_not_panic() {
     let context = ZkEmailContext {
         account_id: "alice.testnet".to_string(),
         new_public_key: String::from(&pk),
-        from_email: "alice@example.com".to_string(),
+        from_address_hash: hashed_email,
         timestamp: "0".to_string(),
     };
 
@@ -409,7 +409,7 @@ fn test_verify_zkemail_and_recover_stores_attempt_immediately() {
         "zk-email-verifier.testnet".parse().unwrap(),
         "email-dkim-verifier.testnet".parse().unwrap(),
         None,
-        vec![hashed_email],
+        vec![hashed_email.clone()],
     );
 
     let proof = ProofInput {
@@ -427,7 +427,7 @@ fn test_verify_zkemail_and_recover_stores_attempt_immediately() {
     let context = ZkEmailContext {
         account_id: "alice.testnet".to_string(),
         new_public_key: expected_new_public_key.clone(),
-        from_email: "alice@example.com".to_string(),
+        from_address_hash: hashed_email,
         timestamp: "0".to_string(),
     };
 
@@ -630,16 +630,32 @@ fn test_dkim_from_with_display_name_matches_configured_email() {
     // Configure this hashed email as a recovery email.
     contract.set_recovery_emails(vec![hashed_email.clone(), test_hashed_email(9)]);
 
-    // Simulate a DKIM verification result where the From: address includes a
-    // display name, e.g. "Pta <n6378056@gmail.com>".
+    // Simulate a DKIM verification result where the original From: header
+    // included a display name, e.g. "Pta <n6378056@gmail.com>", but the
+    // verifier returns the hash of the canonical sender email.
+    let raw_from = "Pta <n6378056@gmail.com>";
+    let canonical_from = raw_from
+        .split('<')
+        .nth(1)
+        .and_then(|s| s.split('>').next())
+        .unwrap()
+        .trim()
+        .to_ascii_lowercase();
+    let mut from_data = canonical_from.into_bytes();
+    from_data.push(b'|');
+    from_data.extend("alice.testnet".as_bytes());
+    let from_address_hash = env::sha256(&from_data);
+    assert_eq!(from_address_hash, hashed_email);
     let verification = VerificationResult {
         verified: true,
         account_id: "alice.testnet".to_string(),
         new_public_key: String::from(
             &PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key"),
         ),
-        from_address: "Pta <n6378056@gmail.com>".to_string(),
+        from_address_hash,
         email_timestamp_ms: Some(1_000),
+        request_id: "REQ_ONCHAIN_DISPLAY".to_string(),
+        error: None,
     };
 
     // Set a pending expectation so the callback can be accepted.
@@ -691,8 +707,10 @@ fn test_on_verify_email_onchain_result_is_noop_without_matching_pending_intent()
         verified: true,
         account_id: "alice.testnet".to_string(),
         new_public_key: String::from(&pk),
-        from_address: "alice@example.com".to_string(),
+        from_address_hash: hashed_email.clone(),
         email_timestamp_ms: Some(1_000),
+        request_id: "REQ_ONCHAIN_NO_PENDING".to_string(),
+        error: None,
     };
 
     // Call the callback without setting any pending expectation. This should be a no-op.
@@ -731,8 +749,10 @@ fn test_on_verify_encrypted_email_result_is_noop_without_matching_pending_intent
         verified: true,
         account_id: "alice.testnet".to_string(),
         new_public_key: String::from(&pk),
-        from_address: "alice@example.com".to_string(),
+        from_address_hash: hashed_email.clone(),
         email_timestamp_ms: Some(1_000),
+        request_id: "dummy".to_string(),
+        error: None,
     };
 
     // Call the callback without setting any pending expectation. This should be a no-op.
@@ -771,8 +791,10 @@ fn test_on_verify_zkemail_result_is_noop_without_matching_pending_intent() {
         verified: true,
         account_id: "alice.testnet".to_string(),
         new_public_key: String::from(&pk),
-        from_address: "alice@example.com".to_string(),
+        from_address_hash: hashed_email.clone(),
         email_timestamp_ms: Some(1_000),
+        request_id: "REQ_ZK_NO_PENDING".to_string(),
+        error: None,
     };
 
     // Call the callback without setting any pending expectation. This should be a no-op.
@@ -815,8 +837,10 @@ fn test_on_verify_email_onchain_result_does_not_consume_pending_intent_on_mismat
         verified: true,
         account_id: "alice.testnet".to_string(),
         new_public_key: String::from(&pk_other),
-        from_address: "alice@example.com".to_string(),
+        from_address_hash: hashed_email.clone(),
         email_timestamp_ms: Some(1_000),
+        request_id: "REQ_ONCHAIN_MISMATCH".to_string(),
+        error: None,
     };
 
     // Set pending expectation for pk_expected...
@@ -840,8 +864,10 @@ fn test_on_verify_email_onchain_result_does_not_consume_pending_intent_on_mismat
         verified: true,
         account_id: "alice.testnet".to_string(),
         new_public_key: String::from(&pk_expected),
-        from_address: "alice@example.com".to_string(),
+        from_address_hash: hashed_email.clone(),
         email_timestamp_ms: Some(1_000),
+        request_id: "REQ_ONCHAIN_MISMATCH".to_string(),
+        error: None,
     };
     contract.on_verify_email_onchain_result(
         "REQ_ONCHAIN_MISMATCH".to_string(),
@@ -885,8 +911,10 @@ fn test_rejects_future_email_timestamps() {
         new_public_key: String::from(
             &PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key"),
         ),
-        from_address: "alice@example.com".to_string(),
+        from_address_hash: hashed_email.clone(),
         email_timestamp_ms: Some(1_000 + 24 * 60 * 60 * 1000),
+        request_id: "REQ_ONCHAIN_FUTURE".to_string(),
+        error: None,
     };
 
     let _ = contract.verify_email_onchain_and_recover(
@@ -935,8 +963,10 @@ fn test_rejects_stale_email_timestamps() {
         new_public_key: String::from(
             &PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key"),
         ),
-        from_address: "alice@example.com".to_string(),
+        from_address_hash: hashed_email.clone(),
         email_timestamp_ms: Some(10_000 - 1_001),
+        request_id: "REQ_ONCHAIN_STALE".to_string(),
+        error: None,
     };
 
     let _ = contract.verify_email_onchain_and_recover(
@@ -982,8 +1012,10 @@ fn test_clears_verified_emails_after_successful_recovery() {
         new_public_key: String::from(
             &PublicKey::from_parts(CurveType::ED25519, vec![0u8; 32]).expect("valid ed25519 key"),
         ),
-        from_address: "alice@example.com".to_string(),
+        from_address_hash: hashed_email.clone(),
         email_timestamp_ms: Some(1_000),
+        request_id: "REQ_ONCHAIN_CLEAR".to_string(),
+        error: None,
     };
 
     let _ = contract.verify_email_onchain_and_recover(

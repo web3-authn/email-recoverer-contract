@@ -15,7 +15,7 @@ The actual `zk-email-verifier` NEAR contract code now lives in a **separate repo
   - Ensures the proof is bound to:
     - A `near` `account_id` (the target account being recovered),
     - A `new_public_key` to add as a full‑access key,
-    - A `from_email` address and timestamp.
+    - A `from_address_hash` and timestamp.
   - Returns a simple `VerificationResult` struct.
 - Keep the per‑account `email-recoverer` contract:
   - Small and focused on policy (which emails are allowed, how many, recency window).
@@ -34,13 +34,13 @@ The actual `zk-email-verifier` NEAR contract code now lives in a **separate repo
   - Parses DKIM‑signed headers and body.
   - Verifies the DKIM signature against the domain’s public key (provided as private input).
   - Extracts and enforces:
-    - `from_email` (and its domain).
+    - The sender email (private) and its domain.
     - `to_email` (expected recovery address).
     - `account_id` in the subject/body (e.g. `bob.near`).
     - `new_public_key` and optional `nonce`/timestamp.
   - Exposes the following as **public signals**:
     - `dkim_public_key_hash` (to verify against on-chain registry).
-    - `from_email_hash` (or `H(email || account_id)` for privacy).
+    - `from_address_hash` (`sha256("<canonical_from>|<account_id_lower>")`).
     - `account_id`
     - `new_public_key`
     - `nonce` / `timestamp`
@@ -87,7 +87,7 @@ In `email-recoverer/src/zk_email_verifier.rs` we define the external interface:
 #[near_sdk::ext_contract(ext_zk_email_verifier)]
 pub trait ZkEmailVerifier {
     /// Verify a zk-SNARK proof and ensure that the provided
-    /// `account_id`, `new_public_key`, `from_email`, and `timestamp`
+    /// `account_id`, `new_public_key`, `from_address_hash`, and `timestamp`
     /// are correctly bound into the public inputs.
     fn verify_with_binding(
         &self,
@@ -95,7 +95,7 @@ pub trait ZkEmailVerifier {
         public_inputs: Vec<String>,
         account_id: String,
         new_public_key: String,
-        from_email: String,
+        from_address_hash: Vec<u8>,
         timestamp: String,
     ) -> VerificationResult;
 }
@@ -111,7 +111,7 @@ ext_zk_email_verifier::ext(zk_email_verifier.clone())
         public_inputs,
         account_id,
         new_public_key,
-        from_email,
+        from_address_hash,
         timestamp,
     )
     .then(
@@ -125,7 +125,7 @@ The verifier contract is responsible for:
 
 - Parsing the proof and public inputs.
 - Checking the Groth16 pairing equation using its embedded verifying key.
-- Ensuring the proof is bound to the exact `(account_id, new_public_key, from_email, timestamp)` values supplied.
+- Ensuring the proof is bound to the exact `(account_id, new_public_key, from_address_hash, timestamp)` values supplied.
 - Returning a `VerificationResult`:
 
 ```rust
@@ -135,8 +135,12 @@ pub struct VerificationResult {
     pub verified: bool,
     pub account_id: String,
     pub new_public_key: String,
-    pub from_address: String,
+    pub from_address_hash: Vec<u8>,
     pub email_timestamp_ms: Option<u64>,
+    pub request_id: String,
+    #[borsh(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 ```
 
@@ -157,7 +161,7 @@ All arkworks / VK‑embedding details live in the external `zk-email-verifier` r
 - Validates request and sends payload to the Circom prover service (`/prove`).
 - Receives `{proof, publicSignals}`.
 - Submits NEAR tx to:
-  - `bob.near::verify_zkemail_and_recover(proof, publicSignals, account_id, new_public_key, from_email, timestamp)`
+  - `bob.near::verify_zkemail_and_recover(proof, publicSignals, context, request_id)`
   - `bob.near` is the per‑account `EmailRecoverer` contract in this repo.
   - It invokes the global `zk-email-verifier` contract via `ext_zk_email_verifier::verify_with_binding`.
   - On success and policy satisfaction, `bob.near` adds `new_public_key` as a full‑access key on itself.

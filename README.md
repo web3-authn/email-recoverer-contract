@@ -29,10 +29,10 @@ Recovery flows are implemented by two companion global verifier contracts:
 
 - `zk-email-verifier` (ZK‑Email path):
   - Verifies zk-SNARK proofs generated from recovery emails (e.g. using zk.email Circom circuits).
-  - Proves that the email satisfies the recovery policy inputs (`from_email_hash`, `account_id`, `new_public_key`, etc.).
+  - Proves that the email satisfies the recovery policy inputs (`from_address_hash`, `account_id`, `new_public_key`, etc.).
   - Returns public outputs to `email-recoverer`, which:
     - Checks `account_id == env::current_account_id()`,
-    - Confirms `from_email_hash` is one of the configured recovery emails,
+    - Confirms `from_address_hash` is one of the configured recovery emails,
     - Applies the same `RecoveryPolicy` logic before adding the new key.
 
 In practice:

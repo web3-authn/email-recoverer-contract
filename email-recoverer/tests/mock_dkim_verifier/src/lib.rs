@@ -16,8 +16,12 @@ pub struct VerificationResult {
     pub verified: bool,
     pub account_id: String,
     pub new_public_key: String,
-    pub from_address: String,
+    pub from_address_hash: Vec<u8>,
     pub email_timestamp_ms: Option<u64>,
+    pub request_id: String,
+    #[borsh(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[near(contract_state)]
@@ -83,6 +87,12 @@ impl MockDkimVerifier {
         // For the mock, treat any successful callback payload as "verified"
         // and return a minimal VerificationResult.
         let verified = matches!(result, Ok(Some(_)));
+        let account_id_lower = requested_by.as_str().to_ascii_lowercase();
+        let canonical_from = "mock@example.com".to_ascii_lowercase();
+        let mut data = canonical_from.into_bytes();
+        data.push(b'|');
+        data.extend(account_id_lower.as_bytes());
+        let from_address_hash = env::sha256(&data);
 
         VerificationResult {
             verified,
@@ -90,8 +100,10 @@ impl MockDkimVerifier {
             // Use a simple, valid-looking public key string; callers that
             // care about the actual key bytes can ignore this in tests.
             new_public_key: "ed25519:1111111111111111111111111111111111111111111111".to_string(),
-            from_address: "mock@example.com".to_string(),
+            from_address_hash,
             email_timestamp_ms: Some(env::block_timestamp_ms()),
+            request_id: "mock-request-id".to_string(),
+            error: None,
         }
     }
 }

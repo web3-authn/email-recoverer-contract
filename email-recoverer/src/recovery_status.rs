@@ -2,7 +2,7 @@ use near_sdk::store::lookup_map::Entry;
 use near_sdk::{env, near, Gas, GasWeight};
 use serde_json::json;
 
-use crate::{EmailRecoverer, EmailRecovererExt, VerificationResult};
+use crate::{EmailRecoverer, EmailRecovererExt, HashedEmail, VerificationResult};
 
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub struct RecoveryAttempt {
 
     pub error: Option<String>,
 
-    pub from_address: Option<String>,
+    pub from_address_hash: Option<HashedEmail>,
     pub email_timestamp_ms: Option<u64>,
 
     pub new_public_key: Option<String>,
@@ -122,7 +122,7 @@ impl EmailRecoverer {
                     created_at_ms: now_ms,
                     updated_at_ms: now_ms,
                     error,
-                    from_address: None,
+                    from_address_hash: None,
                     email_timestamp_ms: None,
                     new_public_key: None,
                 });
@@ -150,7 +150,7 @@ impl EmailRecoverer {
             Entry::Occupied(mut entry) => {
                 let attempt = entry.get_mut();
                 attempt.updated_at_ms = now_ms;
-                attempt.from_address = Some(vr.from_address.clone());
+                attempt.from_address_hash = Some(vr.from_address_hash.clone());
                 attempt.email_timestamp_ms = vr.email_timestamp_ms;
                 attempt.new_public_key = Some(vr.new_public_key.clone());
             }
@@ -161,7 +161,7 @@ impl EmailRecoverer {
                     created_at_ms: now_ms,
                     updated_at_ms: now_ms,
                     error: None,
-                    from_address: Some(vr.from_address.clone()),
+                    from_address_hash: Some(vr.from_address_hash.clone()),
                     email_timestamp_ms: vr.email_timestamp_ms,
                     new_public_key: Some(vr.new_public_key.clone()),
                 });

@@ -21,7 +21,7 @@ For UX, the contract supports a client-provided `request_id` that lets the front
   - `get_recovery_attempt(request_id) -> Option<RecoveryAttempt>`
 - Attempts are automatically cleared after ~200 blocks via a yield-timeout callback; once cleared, `get_recovery_attempt` returns `None`.
 
-Note: `RecoveryAttempt` is short-lived polling state and may include verifier outputs like `from_address` and `new_public_key` for debugging/UI.
+Note: `RecoveryAttempt` is short-lived polling state and may include verifier outputs like `from_address_hash` and `new_public_key` for debugging/UI.
 
 ---
 
@@ -156,7 +156,7 @@ The DKIM/Outlayer path is designed so that a relayer attaches at least **0.01 NE
      - Forwards only the portion needed (e.g. ~0.001 NEAR) to Outlayer.
      - Refunds any unused portion of the attached deposit directly to `payer_account_id`.
   3. `EmailRecoverer::on_verify_email_onchain_result`:
-     - Receives `VerificationResult { verified, account_id, new_public_key, email_timestamp_ms }`.
+     - Receives `VerificationResult { verified, account_id, new_public_key, from_address_hash, email_timestamp_ms, request_id, error }`.
      - Applies all normal checks (account binding, hashed email membership, `RecoveryPolicy`) and, if satisfied, adds the new full-access key.
 
 - **Net effect**

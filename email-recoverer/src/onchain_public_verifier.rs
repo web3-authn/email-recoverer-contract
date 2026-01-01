@@ -1,4 +1,4 @@
-use crate::{ext_self, EmailRecoverer, RecoveryAttemptStatus, VerificationResult};
+use crate::{ext_self, EmailRecoverer, RecoveryAttemptStatus, VerificationResult, HASHED_EMAIL_LEN};
 use near_sdk::{env, log, AccountId, Gas, NearToken, Promise, PromiseError, PublicKey};
 
 /// External interface for the global EmailDKIMVerifier contract (TEE path).
@@ -91,9 +91,19 @@ pub fn on_verify_email_onchain_result(
         return;
     }
 
-    // Compute hashed email from the DKIM-verifier-provided From: address
-    // and ensure it is configured.
-    let hashed_email = contract.hash_from_email_for_current_account(&verification.from_address);
+    // Ensure the DKIM verifier provided a valid hashed From: address and that it is configured.
+    let hashed_email = verification.from_address_hash.clone();
+    if hashed_email.len() != HASHED_EMAIL_LEN {
+        contract.fail_attempt(
+            &request_id,
+            RecoveryAttemptStatus::Failed,
+            format!(
+                "Invalid recovery email hash in verification result (expected {} bytes).",
+                HASHED_EMAIL_LEN
+            ),
+        );
+        return;
+    }
 
     if !contract.is_configured_recovery_email(&hashed_email) {
         contract.fail_attempt(
