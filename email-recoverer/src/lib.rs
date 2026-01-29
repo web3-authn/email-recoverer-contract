@@ -163,6 +163,22 @@ impl EmailRecoverer {
         self.email_dkim_verifier = email_dkim_verifier;
     }
 
+    /// Clear all contract state except verifier account IDs.
+    /// Recovery attempts are cleared by rotating the storage prefix.
+    pub fn clear_state(&mut self) {
+        self.assert_owner();
+
+        self.recovery_emails.clear();
+        self.verified_emails.clear();
+        self.pending_recovery_intents.clear();
+        self.policy = RecoveryPolicy::default();
+
+        let mut prefix = b"r".to_vec();
+        prefix.extend(env::random_seed());
+        prefix.extend(env::block_timestamp_ms().to_le_bytes());
+        self.recovery_attempts_by_request_id = LookupMap::new(prefix);
+    }
+
     /// TEE/encrypted path: ask the EmailDKIMVerifier to verify DKIM for the
     /// given encrypted email blob and recover the account
     ///

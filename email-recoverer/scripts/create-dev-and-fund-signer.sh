@@ -12,8 +12,8 @@ CONTRACT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "$CONTRACT_DIR/.env"
 
 NETWORK="${NEAR_NETWORK_ID:-testnet}"
-# BENEFICIARY_ACCOUNT="cyan-loong.testnet"
-BENEFICIARY_ACCOUNT="w3a-email-recoverer-v1.testnet"
+BENEFICIARY_ACCOUNT="cyan-loong.testnet"
+# BENEFICIARY_ACCOUNT="w3a-email-recoverer-v1.testnet"
 
 TIMESTAMP="$(date +%s)"
 DEV_ACCOUNT_ID="w3a-dev-${TIMESTAMP}.${NETWORK}"
